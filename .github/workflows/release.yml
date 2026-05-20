@@ -1,0 +1,114 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write    # softprops/action-gh-release needs this to upload assets
+  id-token: none     # no OIDC
+
+env:
+  CARGO_TERM_COLOR: always
+  CROSS_PINNED_TAG: v0.2.5
+
+jobs:
+  build:
+    # workflow_dispatch must target a tag, never an arbitrary branch.
+    if: github.event_name == 'push' || github.ref_type == 'tag'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            slug:    linux-gnu-x86_64
+            triple:  x86_64-unknown-linux-gnu
+            builder: cargo
+          - runner: ubuntu-latest
+            slug:    linux-gnu-aarch64
+            triple:  aarch64-unknown-linux-gnu
+            builder: cross
+          - runner: ubuntu-latest
+            slug:    linux-musl-x86_64
+            triple:  x86_64-unknown-linux-musl
+            builder: cross
+            rustflags: "-C target-feature=+crt-static"
+          - runner: ubuntu-latest
+            slug:    linux-musl-aarch64
+            triple:  aarch64-unknown-linux-musl
+            builder: cross
+            rustflags: "-C target-feature=+crt-static"
+          - runner: macos-latest
+            slug:    macos-x86_64
+            triple:  x86_64-apple-darwin
+            builder: cargo
+          - runner: macos-latest
+            slug:    macos-aarch64
+            triple:  aarch64-apple-darwin
+            builder: cargo
+
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5    # v4
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9    # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.triple }}
+
+      - name: Install cross (cross builder only)
+        if: matrix.builder == 'cross'
+        run: cargo install cross --git https://github.com/cross-rs/cross --tag ${{ env.CROSS_PINNED_TAG }} --locked
+
+      - name: Audit crate/skill pairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          crates=(crates/*/)
+          for c in "${crates[@]}"; do
+            name=$(basename "$c")
+            if [ ! -d "skills/ny-$name" ]; then
+              echo "::error::crate $name has no matching skills/ny-$name dir"
+              exit 1
+            fi
+          done
+          echo "packaging ${#crates[@]} crate/skill pair(s) for ${{ matrix.slug }}"
+
+      - name: Build (cargo)
+        if: matrix.builder == 'cargo'
+        run: cargo build --workspace --release --locked --target ${{ matrix.triple }}
+
+      - name: Build (cross)
+        if: matrix.builder == 'cross'
+        run: cross build --workspace --release --locked --target ${{ matrix.triple }}
+
+      - name: Package + checksum every crate/skill pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          slug="${{ matrix.slug }}"
+          triple="${{ matrix.triple }}"
+          out="release-assets"
+          mkdir -p "$out"
+          if command -v sha256sum >/dev/null; then SHA="sha256sum"; else SHA="shasum -a 256"; fi
+          for crate in crates/*/; do
+            name=$(basename "$crate")
+            tar -C "target/$triple/release" -czf "$out/$name-$tag-$slug.tar.gz" "$name"
+            ( cd "$out" && $SHA "$name-$tag-$slug.tar.gz" > "$name-$tag-$slug.sha256" )
+            echo "packaged $out/$name-$tag-$slug.tar.gz"
+          done
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65    # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.sha256
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
