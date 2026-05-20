@@ -14,15 +14,28 @@
 | --- | --- | --- |
 | [codemap](./skills/codemap) | Survey a codebase: list files, show symbols, find definitions | `skills/codemap` |
 
-## Building
+## Install (end users)
 
 ```bash
-cargo build --release
-# or build a single skill:
-cargo build --release -p codemap
+./scripts/install.sh           # downloads the latest release for your platform
+./scripts/install.sh v0.1.1    # or pin a specific version
 ```
 
-Binaries land in `target/release/<skill-name>`.
+Supported asset slugs: `linux-gnu-x86_64`, `linux-gnu-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `macos-x86_64`, `macos-aarch64`. The script auto-detects the right slug from `uname` + libc probe; override with `SKILLS_TARGET=<slug>` if you need to (e.g. installing into an Alpine container from a glibc host). If you hit GitHub's 60/hr unauthenticated API rate limit, export `GITHUB_TOKEN` before running.
+
+After install, every skill exposes its binary at `skills/<name>/scripts/<name>` -- the `SKILL.md` manifest invokes it from there.
+
+## Build from source (developers)
+
+```bash
+./scripts/build-skills.sh
+```
+
+Builds every workspace crate that has a matching `skills/<name>/` directory in `--release` mode and copies each binary into `skills/<name>/scripts/<name>`. The same layout `install.sh` produces.
+
+## Security / integrity
+
+Release tarballs are paired with `.sha256` files generated in the same CI job that built them. `install.sh` verifies the checksum and refuses tarballs containing absolute paths or `..` segments before extraction. Code signing (Apple notarisation, sigstore) is intentionally out of scope for this revision.
 
 ## Adding a new skill
 
