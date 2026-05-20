@@ -16,13 +16,15 @@ description: Use when exploring an unfamiliar codebase, surveying project struct
 
 Prefer `codemap` over ad-hoc `grep`/`find` when you need **structured** information (kind + line range, not just substring match).
 
-## Build
+## Run
+
+The skill ships a pre-built binary; invoke it from the skill directory:
 
 ```bash
-cargo build --release -p codemap
+./scripts/codemap <subcommand> [flags]
 ```
 
-Binary lands at `target/release/codemap` (relative to the workspace root).
+If the binary is missing, run `./scripts/install.sh` from the repo root (downloads from GitHub Releases) or `./scripts/build-skills.sh` (builds from `crates/codemap` locally).
 
 ## Subcommands
 
@@ -57,4 +59,4 @@ codemap stats
 
 ## Supported languages
 
-Rust, TypeScript, TSX, JavaScript, Python. Adding a new language is a single-file change: drop a `.scm` query into `skills/codemap/src/queries/`, register it in `src/lang.rs`, add an extension mapping.
+Rust, TypeScript, TSX, JavaScript, Python. Adding a new language is a single-file change: drop a `.scm` query into `crates/codemap/src/queries/`, register it in `src/lang.rs`, add an extension mapping.
