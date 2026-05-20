@@ -49,3 +49,21 @@ fn files_human_groups_by_language() {
     assert!(text.contains("python"));
     assert!(text.contains("typescript"));
 }
+
+#[test]
+fn tree_json_returns_nested_structure() {
+    let out = Command::new(bin())
+        .args(["tree", "--json", "--path"])
+        .arg(fixture())
+        .output()
+        .expect("run codemap");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json");
+    assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
+    let tree = &v["data"];
+    assert!(tree["is_dir"].as_bool().unwrap_or(false));
+    let children = tree["children"].as_array().expect("children array");
+    let names: Vec<&str> = children.iter().filter_map(|c| c["name"].as_str()).collect();
+    assert!(names.contains(&"src"));
+    assert!(names.contains(&"app.py"));
+}
