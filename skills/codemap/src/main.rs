@@ -1,5 +1,8 @@
 mod cli;
 mod commands;
+mod lang;
+mod output;
+mod walk;
 
 use clap::Parser;
 use cli::{Cli, Command};
