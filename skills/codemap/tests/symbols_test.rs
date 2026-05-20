@@ -106,3 +106,28 @@ fn symbols_tsx_extracts_function_and_interface() {
     assert!(pairs.contains(&("Props".into(), "interface".into())));
     assert!(pairs.contains(&("Header".into(), "fn".into())));
 }
+
+#[test]
+fn symbols_javascript_extracts_function_and_class() {
+    let file = fixture().join("src/util.js");
+    let out = Command::new(bin())
+        .args(["symbols", "--json"])
+        .arg(&file)
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let pairs: Vec<(String, String)> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["name"].as_str().unwrap().to_string(),
+                s["kind"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert!(pairs.contains(&("add".into(), "fn".into())));
+    assert!(pairs.contains(&("Counter".into(), "class".into())));
+}
