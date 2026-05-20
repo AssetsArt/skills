@@ -1,6 +1,6 @@
 # Skills Distribution Design
 
-**Status:** approved 2026-05-20
+**Status:** approved 2026-05-20 (revised after subagent review)
 **Author:** AssetsArt
 **Implements:** moving Rust source out of `skills/` and shipping pre-built
 binaries through GitHub Releases, mirroring the layout of
@@ -25,6 +25,9 @@ Releases so end users do not need a Rust toolchain to run a skill.
   (`version.workspace = true`).
 - Auto-update / self-update inside the install script. Users re-run
   `install.sh` to upgrade.
+- Code signing (Apple notarisation, sigstore). The integrity story relies on
+  SHA-256 checksums verified at install time; signing can come later without
+  changing the install UX.
 
 ## File layout (target state)
 
@@ -55,9 +58,10 @@ repo-root/
     └── release.yml                  # NEW
 ```
 
-Convention: **crate name == skill dir name == binary name**. The build and
-install scripts rely on this; an exception (e.g. a future shell-only skill
-with no Rust crate) is handled by graceful skipping, not by extra config.
+Convention: **crate name == skill dir name == binary name**. The build,
+install, and release scripts rely on this. A future shell-only skill (no
+matching crate) is allowed; the inverse (crate without matching skill dir) is
+treated as a configuration error and fails the release.
 
 ## Components
 
@@ -80,6 +84,7 @@ current source tree.
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
+command -v cargo >/dev/null || { echo "cargo not found; install via https://rustup.rs/" >&2; exit 1; }
 cargo build --workspace --release --locked
 for crate in crates/*/; do
   name=$(basename "$crate")
@@ -93,14 +98,24 @@ done
 
 Behaviour:
 - Fails fast (`set -euo pipefail`).
-- Crates without a matching `skills/<name>/` are skipped.
-- Pre-flight checks for `cargo` on PATH; prints a one-line pointer to
-  `https://rustup.rs/` and exits 1 if missing.
+- Pre-flight check for `cargo`; one-line error + rustup pointer if missing.
+- Crates without a matching `skills/<name>/` are skipped (allows internal
+  helper crates in the future).
 
 ### `.github/workflows/release.yml`
 
 Triggers on `push` of tags matching `v*`, plus `workflow_dispatch` so a
-failed run can be retried without re-tagging.
+failed run can be retried without re-tagging. `workflow_dispatch` is gated:
+the job exits early unless `github.ref_type == 'tag'`, so dispatched runs
+must target an existing tag, not an arbitrary branch.
+
+Workflow-level config (must all be explicit):
+
+```yaml
+permissions:
+  contents: write              # required by softprops/action-gh-release
+  id-token: none               # no OIDC use
+```
 
 Matrix:
 
@@ -111,68 +126,126 @@ Matrix:
 | `macos-13`      | `x86_64-apple-darwin`          |
 | `macos-latest`  | `aarch64-apple-darwin`         |
 
-Per-job steps:
+Per-job steps (third-party actions pinned by commit SHA, not floating tag):
 
-1. `actions/checkout@v4`
-2. `dtolnay/rust-toolchain@stable` with `targets: ${{ matrix.target }}`
-3. For `aarch64-unknown-linux-gnu`: `apt-get install -y gcc-aarch64-linux-gnu`,
-   export `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`.
+1. `actions/checkout@<sha>`
+2. `dtolnay/rust-toolchain@<sha>` with `toolchain: stable` and
+   `targets: ${{ matrix.target }}`.
+3. **For `aarch64-unknown-linux-gnu` only:**
+   ```yaml
+   - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+   - run: |
+       echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"   >> "$GITHUB_ENV"
+       echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"    >> "$GITHUB_ENV"
+       echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+   ```
+   All three envvars are required: `cc` crate (tree-sitter C grammars) reads
+   `CC_<triple>` for the compiler and `AR_<triple>` for the archiver; cargo
+   reads `CARGO_TARGET_*_LINKER` for the linker. Setting only the linker
+   leaves the host `cc` compiling x86_64 objects that the aarch64 linker
+   rejects.
 4. `cargo build --workspace --release --locked --target ${{ matrix.target }}`
-5. For each `crates/<name>/`: package
-   `target/<target>/release/<name>` into
-   `<name>-<tag>-<target>.tar.gz` (tar with the binary at archive root).
-6. `softprops/action-gh-release@v2` upload all archives to the release
-   identified by the pushed tag, with the release marked as latest only when
-   the tag does not contain `-` (i.e. not a pre-release).
+5. **Skill/crate pair audit** (loud assertion):
+   ```sh
+   shopt -s nullglob
+   crates=(crates/*/)
+   skills=(skills/*/)
+   for c in "${crates[@]}"; do
+     name=$(basename "$c")
+     [ -d "skills/$name" ] || { echo "::error::crate $name has no skills/$name dir"; exit 1; }
+   done
+   echo "packaging ${#crates[@]} crate/skill pairs"
+   ```
+   The inverse (skill without crate) is a warning, not an error, because
+   shell-only skills are a permitted future case.
+6. **Package** each `crates/<name>` as
+   `<name>-<tag>-<target>.tar.gz` with the binary at archive root:
+   ```sh
+   tar -C "target/${{ matrix.target }}/release" -czf "$name-$tag-$target.tar.gz" "$name"
+   ```
+7. **Checksums.** Emit `<name>-<tag>-<target>.sha256` next to each tarball:
+   ```sh
+   sha256sum "$name-$tag-$target.tar.gz" > "$name-$tag-$target.sha256"
+   ```
+   (macOS jobs use `shasum -a 256`.)
+8. `softprops/action-gh-release@<sha>`: upload every `.tar.gz` and `.sha256`
+   to the release identified by the pushed tag, with `make_latest: true`
+   only when the tag has no pre-release suffix (no `-` in the tag name).
 
-The cross-compile path uses the native GCC cross-linker rather than
-`cross-rs/cross` to keep workflow logs flat and avoid the Docker dependency.
-`tree-sitter` C grammars build through the `cc` crate, which honours
-`CARGO_TARGET_*_LINKER` and the `CC_<triple>` envvar.
+Cross-compile choice: native GCC cross-linker over `cross-rs/cross` keeps
+workflow logs flat and avoids the Docker dependency. The trade-off is the
+explicit envvar tax in step 3, which the spec now enforces.
 
 ### `scripts/install.sh`
 
-Used by end users in a fresh clone.
+Used by end users in a fresh clone. Designed to be idempotent (re-run to
+upgrade) and atomic per skill (never leaves a half-extracted binary in
+place).
 
 Behaviour:
-- Detects platform via `uname -s` / `uname -m`, maps to a target triple.
-- First positional arg is an optional version; default is `latest`, resolved
-  via `https://api.github.com/repos/<repo>/releases/latest`.
-- For each `skills/<name>/`, downloads
-  `https://github.com/<repo>/releases/download/<tag>/<name>-<tag>-<triple>.tar.gz`
-  and extracts to `skills/<name>/scripts/`.
-- Pre-flight checks for `curl` and `tar`. Unknown platforms print the
-  supported list and exit 1.
-- If an asset is missing for a skill (HTTP 404), prints a warning and
-  continues — `skills/` may contain shell-only skills in the future that have
-  no release asset.
+1. Pre-flight: `command -v curl tar sha256sum` (fall back to `shasum -a 256`
+   on macOS). Exit 1 with a one-line error if any is missing.
+2. Detect target via `uname -s` / `uname -m`. Map to triple:
+   - `Darwin-arm64` → `aarch64-apple-darwin`
+   - `Darwin-x86_64` → `x86_64-apple-darwin`
+   - `Linux-x86_64` → `x86_64-unknown-linux-gnu`
+   - `Linux-aarch64` / `Linux-arm64` → `aarch64-unknown-linux-gnu`
+   - Anything else → print the supported list, exit 1.
+3. Resolve repo slug: `repo="${SKILLS_REPO:-AssetsArt/skills}"`. **Print it
+   to stderr before any download** so users see what they're pulling from.
+4. Resolve version: first positional arg, else `latest` via
+   `https://api.github.com/repos/$repo/releases/latest`. If
+   `GITHUB_TOKEN` is set in the environment, send it via
+   `Authorization: Bearer` to bypass the 60/hr unauthenticated rate limit
+   (relevant when running in CI or behind shared NAT).
+5. For each `skills/<name>/`:
+   a. Stage to `$(mktemp -d)/<name>`.
+   b. Download `<name>-<tag>-<triple>.tar.gz` and `<name>-<tag>-<triple>.sha256`
+      with `curl --fail --show-error --location --proto '=https' --tlsv1.2`.
+      On 404, print a warning and skip (lets shell-only skills coexist).
+   c. **Verify checksum** before touching the destination.
+   d. **Tar entry audit** before extraction:
+      ```sh
+      if tar -tzf "$archive" | grep -E '(^/|(^|/)\.\./)' ; then
+        echo "refusing tarball with absolute or parent-relative entries" >&2
+        exit 1
+      fi
+      ```
+   e. Extract into the stage dir with `tar -xzf "$archive" -C "$stage"`.
+      Confirm the resulting file is `$stage/<name>` and nothing else.
+   f. `chmod +x` then `mv -f "$stage/<name>" "skills/<name>/scripts/<name>"`.
+      On Darwin: `xattr -d com.apple.quarantine "skills/<name>/scripts/<name>"`
+      (ignore failure if the attribute is absent).
+   g. Clean the stage dir.
+6. Final log line: `installed N skills at version <tag>`.
 
-The repo slug is parameterised through the `SKILLS_REPO` environment variable,
-defaulting to `AssetsArt/skills`, so a fork can run its own releases.
+Atomicity model: staging + final `mv` means a failed download or checksum
+mismatch never corrupts the previously installed binary. Per-skill atomicity
+is enough; cross-skill atomicity (all-or-nothing across multiple skills) is
+out of scope because skills are independent.
 
 ### `SKILL.md` (codemap)
 
-The frontmatter description stays the same. The body changes the install/run
-instructions from `cargo build` / `cargo install` to:
-
-```
-Run the bundled binary:
-  ./scripts/codemap <subcommand> [flags]
-```
-
-The agent-facing manifest must always invoke `./scripts/codemap` (relative to
-the skill directory) so installs from `install.sh` work without modifying the
-user's `PATH`.
+Two changes:
+- Replace install / run instructions with: `./scripts/codemap <subcommand>`.
+  The agent-facing manifest must always invoke the relative path so installs
+  through `install.sh` work without modifying `PATH`.
+- Update the "Adding a new language" paragraph that currently points to
+  `skills/codemap/src/queries/` to point to `crates/codemap/src/queries/`
+  post-migration.
 
 ### `README.md` (workspace root)
 
-Replaces the existing "Building" section with two subsections:
+Replaces the existing "Building" section with:
 
-- **Install (end users):** `./scripts/install.sh [version]`
-- **Build from source (developers):** `./scripts/build-skills.sh`
-
-Also adds a one-line note that release assets cover Linux x86_64/aarch64 and
-macOS x86_64/aarch64.
+- **Install (end users):** `./scripts/install.sh [version]`, with a note that
+  release assets cover Linux x86_64/aarch64 and macOS x86_64/aarch64, and a
+  one-liner about `GITHUB_TOKEN=...` to bypass the API rate limit if the
+  user hits it.
+- **Build from source (developers):** `./scripts/build-skills.sh`.
+- **Security / integrity:** one paragraph stating that binaries are
+  SHA-256-checksummed at release time and verified by `install.sh`; signing
+  is a non-goal for this revision.
 
 ### `.gitignore`
 
@@ -182,23 +255,24 @@ Adds:
 skills/*/scripts/
 ```
 
-This means `scripts/` directories under each skill are never tracked. The
-top-level `scripts/` (containing `build-skills.sh` and `install.sh`) is
-unaffected because the pattern is anchored at `skills/`.
+The pattern is anchored at `skills/` so the top-level `scripts/` directory
+(`build-skills.sh`, `install.sh`) is unaffected.
 
 ## Data flow
 
 **End-user install.** `git clone` → `./scripts/install.sh` → uname detect →
-GitHub Releases API for tag → per-skill download + extract into
-`skills/<name>/scripts/` → chmod +x → agent runs `./scripts/<name>` directly.
+GitHub Releases API for tag → per-skill: stage temp → download tarball +
+`.sha256` → verify checksum → audit tar entries → extract → `mv` into
+`skills/<name>/scripts/` → chmod +x → strip `com.apple.quarantine` on
+darwin → agent runs `./scripts/<name>` directly.
 
 **Developer iteration.** Edit `crates/<name>/src/...` → `cargo test`
 (workspace) → `./scripts/build-skills.sh` to refresh local
 `skills/<name>/scripts/<bin>` → exercise the binary via SKILL.md.
 
-**Release.** Tag `v0.1.1` → push → `release.yml` matrix builds → 4 tarballs
-attached to the GitHub release for that tag → users re-run `install.sh` (or
-`install.sh v0.1.1`) to upgrade.
+**Release.** Tag `v0.1.1` → push → `release.yml` matrix builds → per crate
++ per target: tarball + sha256 attached to the release → users re-run
+`install.sh` (or `install.sh v0.1.1`) to upgrade.
 
 ## Migration (one-shot, in order)
 
@@ -212,23 +286,56 @@ attached to the GitHub release for that tag → users re-run `install.sh` (or
 4. Add `.gitignore` entry for `skills/*/scripts/`.
 5. Add `scripts/build-skills.sh`, run it, confirm
    `skills/codemap/scripts/codemap` is produced and runs.
-6. Update `skills/codemap/SKILL.md` body to reference `./scripts/codemap`.
-7. Update root `README.md` (Install + Build sections).
-8. Add `scripts/install.sh`.
-9. Add `.github/workflows/release.yml`.
+6. Update `skills/codemap/SKILL.md`:
+   - run command → `./scripts/codemap`
+   - "Adding a new language" path → `crates/codemap/src/queries/`.
+7. Update root `README.md` (Install / Build / Security sections).
+8. Add `scripts/install.sh` with the staging + checksum + entry-audit flow.
+9. Add `.github/workflows/release.yml` with pinned action SHAs, explicit
+   `permissions:`, cross-compile envvars, pair audit, and checksum
+   emission.
 10. Single commit per logical step (migration / build script / docs /
     install script / release workflow) so history stays bisectable.
 
 ## Error handling summary
 
-| Surface           | Failure                                   | Behaviour                                              |
-|-------------------|-------------------------------------------|--------------------------------------------------------|
-| `build-skills.sh` | `cargo` missing                           | one-line error + rustup pointer, exit 1                |
-| `build-skills.sh` | crate has no matching `skills/<name>/`    | skip silently                                          |
-| `install.sh`      | `curl` / `tar` missing                    | print which tool is missing, exit 1                    |
-| `install.sh`      | unknown platform                          | list supported triples, exit 1                         |
-| `install.sh`      | asset 404 for a given skill               | print warning, continue to next skill                  |
-| `release.yml`     | aarch64 cross-link failure                | surfaced through `set -e`; rerun via workflow_dispatch |
+| Surface           | Failure                                   | Behaviour                                                                                  |
+|-------------------|-------------------------------------------|--------------------------------------------------------------------------------------------|
+| `build-skills.sh` | `cargo` missing                           | one-line error + rustup pointer, exit 1                                                    |
+| `build-skills.sh` | crate has no matching `skills/<name>/`    | skip silently (internal helper crate)                                                       |
+| `install.sh`      | `curl` / `tar` / `sha256sum` missing      | name the missing tool, exit 1                                                              |
+| `install.sh`      | unknown platform                          | list supported triples, exit 1                                                             |
+| `install.sh`      | GitHub API rate-limited (HTTP 403)        | print hint about `GITHUB_TOKEN` env var, exit 1                                            |
+| `install.sh`      | asset 404 for a given skill               | warn, continue (shell-only skill coexistence)                                              |
+| `install.sh`      | checksum mismatch                         | delete stage, exit 1; previously installed binary untouched                                |
+| `install.sh`      | tar entry audit fails                     | exit 1 before extraction; previously installed binary untouched                            |
+| `release.yml`     | crate without matching `skills/<name>/`   | `::error::` annotation, fail the job (caught by pair-audit step)                           |
+| `release.yml`     | aarch64 cross-compile failure             | `set -e` exits; retry via `workflow_dispatch` against the same tag                         |
+| `release.yml`     | `workflow_dispatch` against a branch      | early-exit guard on `github.ref_type == 'tag'`                                             |
+
+## Security & integrity model
+
+- **Source integrity:** Rust source is unchanged; the migration is `git mv`
+  plus a workspace-members edit. CI keeps running fmt / clippy / test on
+  every push.
+- **Build integrity:** release runs on GitHub-hosted runners. All
+  third-party actions (`actions/checkout`, `dtolnay/rust-toolchain`,
+  `softprops/action-gh-release`) are pinned to commit SHAs to prevent
+  upstream tag-rewrite attacks.
+- **Distribution integrity:** every tarball is paired with a `.sha256`
+  generated in the same job that built it. `install.sh` verifies the
+  checksum before extraction and refuses tarballs containing absolute paths
+  or `..` segments.
+- **Trust boundary:** `GITHUB_TOKEN` is scoped to `contents: write` at the
+  workflow level only; `id-token` is explicitly disabled. The
+  `workflow_dispatch` trigger is gated on `github.ref_type == 'tag'` so a
+  re-run cannot ship binaries from an arbitrary branch.
+- **macOS quarantine:** `install.sh` strips `com.apple.quarantine` after
+  install so the binary runs without manual user intervention. (Signing /
+  notarisation remain non-goals.)
+- **Out of scope:** TOCTOU between download and verify (acceptable given
+  per-skill atomic `mv`); arbitrary `SKILLS_REPO` substitution by a
+  tampered shell profile (mitigated by printing the resolved repo).
 
 ## Testing
 
@@ -237,13 +344,18 @@ attached to the GitHub release for that tag → users re-run `install.sh` (or
 - Existing `ci.yml` is untouched and still discovers crates via
   `--workspace`.
 - `release.yml` cannot be dry-run locally; first verification is the next
-  pushed tag. `workflow_dispatch` is wired so retries do not require a new
-  tag.
+  pushed tag. `workflow_dispatch` (gated on a tag ref) is wired so retries
+  do not require a new tag.
 - `install.sh` is exercised manually after the first successful release: in
   a fresh clone, run `./scripts/install.sh` and confirm
-  `skills/codemap/scripts/codemap files --path .` works.
+  `skills/codemap/scripts/codemap files --path .` works on both Linux and
+  macOS hosts. A second run is expected to be a no-op upgrade with no
+  ownership change to the previously installed binary.
 
-## Open questions
+## Follow-ups (next iteration)
 
-None at design time. Windows support, signed binaries, and homebrew /
-shell-completion packaging are explicit non-goals for this revision.
+- Apple notarisation / sigstore signing for binaries.
+- Windows targets.
+- Optional `SKILLS_REPO` allowlist so users in regulated environments can
+  pin to a known publisher.
+- Cosign-style transparency log for release assets.
