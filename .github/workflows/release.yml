@@ -33,12 +33,10 @@ jobs:
             slug:    linux-musl-x86_64
             triple:  x86_64-unknown-linux-musl
             builder: cross
-            rustflags: "-C target-feature=+crt-static"
           - runner: ubuntu-latest
             slug:    linux-musl-aarch64
             triple:  aarch64-unknown-linux-musl
             builder: cross
-            rustflags: "-C target-feature=+crt-static"
           - runner: macos-latest
             slug:    macos-x86_64
             triple:  x86_64-apple-darwin
