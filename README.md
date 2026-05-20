@@ -12,7 +12,7 @@
 
 | Skill | What it does | Crate |
 | --- | --- | --- |
-| [codemap](./skills/codemap) | Survey a codebase: list files, show symbols, find definitions | `skills/codemap` |
+| [codemap](./skills/codemap) | Survey a codebase: list files, show symbols, find definitions | `crates/codemap` |
 
 ## Install (end users)
 
@@ -35,7 +35,7 @@ Builds every workspace crate that has a matching `skills/<name>/` directory in `
 
 ## Security / integrity
 
-Release tarballs are paired with `.sha256` files generated in the same CI job that built them. `install.sh` verifies the checksum and refuses tarballs containing absolute paths or `..` segments before extraction. Code signing (Apple notarisation, sigstore) is intentionally out of scope for this revision.
+Release tarballs will be paired with `.sha256` companions generated in the same CI job that builds them. `install.sh` verifies the checksum and refuses tarballs containing absolute paths or `..` segments before extraction. Code signing (Apple notarisation, sigstore) is intentionally out of scope for this revision.
 
 ## Adding a new skill
 
