@@ -156,3 +156,25 @@ fn symbols_python_extracts_class_and_top_level_fn() {
     assert!(pairs.contains(&("Cat".into(), "class".into())));
     assert!(pairs.contains(&("main".into(), "fn".into())));
 }
+
+#[test]
+fn symbols_whole_project_aggregates_all_languages() {
+    let out = Command::new(bin())
+        .args(["symbols", ".", "--json", "--path"])
+        .arg(fixture())
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let files: std::collections::HashSet<String> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["file"].as_str().unwrap().to_string())
+        .collect();
+    assert!(files.iter().any(|f| f.ends_with("lib.rs")));
+    assert!(files.iter().any(|f| f.ends_with("types.ts")));
+    assert!(files.iter().any(|f| f.ends_with("component.tsx")));
+    assert!(files.iter().any(|f| f.ends_with("util.js")));
+    assert!(files.iter().any(|f| f.ends_with("app.py")));
+}
