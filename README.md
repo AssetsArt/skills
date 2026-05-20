@@ -12,7 +12,7 @@
 
 | Skill | What it does | Crate |
 | --- | --- | --- |
-| [codemap](./skills/codemap) | Survey a codebase: list files, show symbols, find definitions | `crates/codemap` |
+| [ny-codemap](./skills/ny-codemap) | Survey a codebase: list files, show symbols, find definitions | `crates/codemap` |
 
 ## Install (end users)
 

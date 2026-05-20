@@ -1,5 +1,5 @@
 ---
-name: codemap
+name: ny-codemap
 description: Use when exploring an unfamiliar codebase, surveying project structure, or locating definitions before editing — `codemap` lists source files, extracts top-level symbols (fn/struct/class/interface/type/enum/trait/const), finds a symbol by name across the project, and reports per-language stats. Trigger on phrases like "what's in this repo", "where is X defined", "show me the structure", "หาฟังก์ชัน", "โครงสร้าง project", "มีไฟล์อะไรบ้าง", "อยู่ไฟล์ไหน". Supports Rust, TypeScript, TSX, JavaScript, Python.
 ---
 

@@ -18,15 +18,17 @@ cd "$repo_root"
 
 cargo build --workspace --release --locked
 
+# Convention: each crate `<name>` exposes a skill at `skills/ny-<name>/`.
+# The binary inside `scripts/` keeps the crate's original name (no rename).
 built=0
 for crate in crates/*/; do
   name="$(basename "$crate")"
-  skill_dir="skills/$name"
+  skill_dir="skills/ny-$name"
   [ -d "$skill_dir" ] || continue          # internal helper crate; no skill surface
   mkdir -p "$skill_dir/scripts"
   cp "target/release/$name" "$skill_dir/scripts/$name"
   chmod +x "$skill_dir/scripts/$name"
-  echo "built skills/$name/scripts/$name"
+  echo "built $skill_dir/scripts/$name"
   built=$((built + 1))
 done
 echo "done: $built skill binary(ies)"
