@@ -51,6 +51,9 @@ detect_slug() {
     Linux)
       # musl detection: ldd --version exits non-zero on musl, so we check stderr
       # too, plus the canonical loader paths as a belt-and-braces fallback.
+      # Note: on scratch-based musl containers that ship neither `ldd` nor
+      # /lib/ld-musl-*.so.1, detection falls through to "gnu". Set
+      # SKILLS_TARGET=linux-musl-x86_64 (or -aarch64) explicitly in that case.
       if (ldd --version 2>&1 | grep -qi musl) \
          || [ -f /lib/ld-musl-x86_64.so.1 ] \
          || [ -f /lib/ld-musl-aarch64.so.1 ]; then
@@ -186,8 +189,19 @@ for skill_dir in skills/*/; do
   # SECURITY: audit tar entries for absolute paths and ../ traversal BEFORE
   # extracting. A malicious tarball could otherwise overwrite arbitrary files
   # outside the skill dir.
-  if tar -tzf "$stage/$asset" | grep -E '(^/|(^|/)\.\./)' >/dev/null; then
-    echo "error: tarball $asset contains unsafe paths (absolute or ../)" >&2
+  # Audit covers POSIX entries: absolute (/...) and any segment containing
+  # `..`. Windows drive prefixes (C:/...) are not caught -- we don't target
+  # Windows in the release matrix.
+  # Audit tar entries BEFORE extraction. Capture in two steps so a corrupt
+  # archive (tar -tzf fails) is surfaced with a diagnostic rather than being
+  # silently masked by the grep that follows it.
+  tar_listing="$(tar -tzf "$stage/$asset")" || {
+    echo "error: could not list $asset (corrupt or unreadable archive)" >&2
+    rm -rf "$stage"
+    exit 1
+  }
+  if printf '%s\n' "$tar_listing" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
+    echo "error: refusing tarball with absolute or '..' entries: $asset" >&2
     rm -rf "$stage"
     exit 1
   fi
