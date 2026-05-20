@@ -49,7 +49,7 @@ impl Language {
             // The remaining branches are wired up in Tasks 9–11.
             Language::TypeScript | Language::Tsx => Some(include_str!("queries/typescript.scm")),
             Language::JavaScript => Some(include_str!("queries/javascript.scm")),
-            Language::Python => None,
+            Language::Python => Some(include_str!("queries/python.scm")),
         }
     }
 }

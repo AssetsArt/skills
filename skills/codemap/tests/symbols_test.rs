@@ -131,3 +131,28 @@ fn symbols_javascript_extracts_function_and_class() {
     assert!(pairs.contains(&("add".into(), "fn".into())));
     assert!(pairs.contains(&("Counter".into(), "class".into())));
 }
+
+#[test]
+fn symbols_python_extracts_class_and_top_level_fn() {
+    let file = fixture().join("app.py");
+    let out = Command::new(bin())
+        .args(["symbols", "--json"])
+        .arg(&file)
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let pairs: Vec<(String, String)> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["name"].as_str().unwrap().to_string(),
+                s["kind"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert!(pairs.contains(&("Cat".into(), "class".into())));
+    assert!(pairs.contains(&("main".into(), "fn".into())));
+}
