@@ -118,75 +118,50 @@ permissions:
 ```
 
 Matrix (6 targets). Asset names use a short, user-friendly slug instead of
-the Rust target triple; the workflow maps slug → triple internally:
+the Rust target triple; the workflow maps slug → triple internally. The
+build follows the same pattern as
+[`AssetsArt/nylon-mesh`](https://github.com/AssetsArt/nylon-mesh): native
+cargo for the host-arch targets, `cross-rs/cross` (Docker) for the three
+Linux targets that need a different libc or arch, and `macos-latest`
+(ARM64) for both Darwin slugs via the Apple SDK's built-in cross-arch
+support.
 
-| Runner          | Asset slug             | Rust target triple                | Toolchain                                       |
-|-----------------|------------------------|-----------------------------------|-------------------------------------------------|
-| `ubuntu-latest` | `linux-gnu-x86_64`     | `x86_64-unknown-linux-gnu`        | native (default gcc)                            |
-| `ubuntu-latest` | `linux-gnu-aarch64`    | `aarch64-unknown-linux-gnu`       | apt `gcc-aarch64-linux-gnu`                     |
-| `ubuntu-latest` | `linux-musl-x86_64`    | `x86_64-unknown-linux-musl`       | apt `musl-tools`                                |
-| `ubuntu-latest` | `linux-musl-aarch64`   | `aarch64-unknown-linux-musl`      | `musl.cc` `aarch64-linux-musl-cross` tarball    |
-| `macos-13`      | `macos-x86_64`         | `x86_64-apple-darwin`             | native                                          |
-| `macos-latest`  | `macos-aarch64`        | `aarch64-apple-darwin`            | native                                          |
+| Runner          | Asset slug             | Rust target triple                | Builder       |
+|-----------------|------------------------|-----------------------------------|---------------|
+| `ubuntu-latest` | `linux-gnu-x86_64`     | `x86_64-unknown-linux-gnu`        | native cargo  |
+| `ubuntu-latest` | `linux-gnu-aarch64`    | `aarch64-unknown-linux-gnu`       | `cross`       |
+| `ubuntu-latest` | `linux-musl-x86_64`    | `x86_64-unknown-linux-musl`       | `cross`       |
+| `ubuntu-latest` | `linux-musl-aarch64`   | `aarch64-unknown-linux-musl`      | `cross`       |
+| `macos-latest`  | `macos-x86_64`         | `x86_64-apple-darwin`             | native cargo  |
+| `macos-latest`  | `macos-aarch64`        | `aarch64-apple-darwin`            | native cargo  |
 
-Per-job steps (third-party actions pinned by commit SHA, not floating tag):
+Per-job steps (third-party actions pinned by commit SHA, not floating tag —
+spec departs from nylon-mesh on this point because pinning was identified
+as a HIGH finding in revision 2):
 
 1. `actions/checkout@<sha>`
 2. `dtolnay/rust-toolchain@<sha>` with `toolchain: stable` and
    `targets: ${{ matrix.triple }}`.
-3. **Toolchain setup, per slug:**
-
-   - **`linux-gnu-x86_64`:** none — default `cc` works.
-   - **`linux-gnu-aarch64`:**
+3. **Builder setup:**
+   - **Native cargo jobs** (`linux-gnu-x86_64`, `macos-*`): no extra step;
+     `dtolnay/rust-toolchain` already installed the target.
+   - **`cross` jobs** (`linux-gnu-aarch64`, `linux-musl-*`):
      ```yaml
-     - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-     - run: |
-         {
-           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
-           echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
-           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
-         } >> "$GITHUB_ENV"
+     - run: cargo install cross --git https://github.com/cross-rs/cross --tag <pinned-tag>
      ```
-   - **`linux-musl-x86_64`:**
-     ```yaml
-     - run: sudo apt-get update && sudo apt-get install -y musl-tools
-     - run: |
-         {
-           echo "CC_x86_64_unknown_linux_musl=musl-gcc"
-           echo "AR_x86_64_unknown_linux_musl=ar"
-           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc"
-         } >> "$GITHUB_ENV"
-     ```
-   - **`linux-musl-aarch64`** (manual musl-cross tarball; pinned URL + SHA):
-     ```yaml
-     - run: |
-         set -euo pipefail
-         url="https://musl.cc/aarch64-linux-musl-cross.tgz"
-         expected_sha=<PIN AT IMPLEMENT TIME>
-         curl -fsSL --proto '=https' --tlsv1.2 "$url" -o /tmp/musl.tgz
-         echo "$expected_sha  /tmp/musl.tgz" | sha256sum -c -
-         mkdir -p "$HOME/.musl-cross"
-         tar -xzf /tmp/musl.tgz -C "$HOME/.musl-cross" --strip-components=1
-         echo "$HOME/.musl-cross/bin" >> "$GITHUB_PATH"
-         {
-           echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc"
-           echo "AR_aarch64_unknown_linux_musl=aarch64-linux-musl-ar"
-           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc"
-         } >> "$GITHUB_ENV"
-     ```
-     The `musl.cc` tarball is a third-party toolchain; the SHA-256 is pinned
-     in the workflow so a host compromise cannot silently swap in a tainted
-     compiler. The pin is refreshed only via a reviewed PR — never auto.
-   - **`macos-x86_64`, `macos-aarch64`:** no extra toolchain step.
-
-   Rationale for `CC_<triple>` + `AR_<triple>` everywhere: the `cc` crate
-   (tree-sitter C grammars) reads these to find a compatible compiler;
-   cargo reads `CARGO_TARGET_*_LINKER` only for the linker. Setting only
-   the linker would leave the host `cc` compiling host-arch objects that
-   the target linker rejects.
-
-4. `cargo build --workspace --release --locked --target ${{ matrix.triple }}`
-5. **Skill/crate pair audit** (loud assertion):
+     `cross` brings its own Docker-based toolchain per target, so no
+     `gcc-aarch64-linux-gnu` / `musl-tools` / `musl.cc` plumbing is needed.
+     The tag is pinned in the workflow to avoid silent upstream regressions.
+4. **musl static-link guard.** Add to the workflow env for musl jobs only:
+   ```yaml
+   env:
+     RUSTFLAGS: -C target-feature=+crt-static
+   ```
+   Rationale: `x86_64-unknown-linux-musl` defaults to static linking, but
+   `aarch64-unknown-linux-musl` does **not** (different default in Rust as
+   of the 2026-05 stable release). Forcing `+crt-static` on both musl
+   targets keeps the "runs on Alpine / distroless / scratch" promise honest.
+5. **Skill/crate pair audit** (loud assertion, runs before any build/package):
    ```sh
    shopt -s nullglob
    crates=(crates/*/)
@@ -198,32 +173,37 @@ Per-job steps (third-party actions pinned by commit SHA, not floating tag):
    ```
    The inverse (skill without crate) is a warning, not an error, because
    shell-only skills are a permitted future case.
-6. **Package** each `crates/<name>` as
+6. **Build:**
+   - Native jobs: `cargo build --workspace --release --locked --target ${{ matrix.triple }}`
+   - cross jobs: `cross build --workspace --release --locked --target ${{ matrix.triple }}`
+7. **Package** each `crates/<name>` as
    `<name>-<tag>-<slug>.tar.gz` with the binary at archive root:
    ```sh
    tar -C "target/${{ matrix.triple }}/release" \
        -czf "$name-$tag-$slug.tar.gz" "$name"
    ```
-7. **Checksums.** Emit `<name>-<tag>-<slug>.sha256` next to each tarball:
+8. **Checksums.** Emit `<name>-<tag>-<slug>.sha256` next to each tarball:
    ```sh
    sha256sum "$name-$tag-$slug.tar.gz" > "$name-$tag-$slug.sha256"
    ```
    (macOS jobs use `shasum -a 256`.)
-8. `softprops/action-gh-release@<sha>`: upload every `.tar.gz` and `.sha256`
-   to the release identified by the pushed tag, with `make_latest: true`
-   only when the tag has no pre-release suffix (no `-` in the tag name).
+9. **Upload.** `softprops/action-gh-release@<sha>`: upload every `.tar.gz`
+   and `.sha256` to the release identified by the pushed tag, with
+   `make_latest: true` only when the tag has no pre-release suffix (no
+   `-` in the tag name).
 
-Cross-compile choice: native toolchains over `cross-rs/cross` keep workflow
-logs flat and avoid the Docker dependency. The trade-off is the explicit
-envvar setup per slug plus the pinned `musl.cc` tarball for
-`linux-musl-aarch64`, which the spec now enforces.
+Builder choice: `cross-rs/cross` is the same toolchain used by nylon-mesh
+for non-host-arch Linux targets. It accepts a Docker dependency in
+exchange for one-line setup per target and well-tested musl/aarch64
+images, avoiding the failure modes the spec previously documented around
+`gcc-aarch64-linux-gnu`, `musl-tools`, and `musl.cc`.
 
-musl static-link note: the `*-unknown-linux-musl` Rust targets default to
-static linking via `+crt-static`, which is what end users on Alpine,
-distroless, and similar minimal images expect. No extra `RUSTFLAGS` is
-required for codemap, but new crates that link to dynamic system libraries
-should declare `[target.'cfg(target_env = "musl")'.dependencies]` overrides
-rather than relying on host glibc.
+macOS choice: building both `x86_64-apple-darwin` and `aarch64-apple-darwin`
+on `macos-latest` (ARM64) replaces the spec's earlier use of `macos-13`,
+which GitHub has flagged for runner deprecation. The Apple SDK shipping
+on `macos-latest` contains both arch slices, so `cargo build --target
+x86_64-apple-darwin` produces a working Intel binary natively without a
+second runner.
 
 ### `scripts/install.sh`
 
@@ -255,6 +235,12 @@ Behaviour:
    - The slug can also be forced via `SKILLS_TARGET` env var
      (e.g. `SKILLS_TARGET=linux-musl-x86_64`) to support cross-arch installs
      on hosts where the auto-detection is wrong (containers, build hosts).
+     **The implementation must validate `SKILLS_TARGET` against the exact
+     set of six known slugs before using it in any URL or filesystem path.**
+     An unknown value (or one containing `/`, `..`, query-string characters,
+     or shell metacharacters) is rejected with the supported list and a
+     non-zero exit — never interpolated into curl arguments or `.sha256`
+     filenames.
    - Anything that doesn't map → print the supported slug list, exit 1.
 3. Resolve repo slug: `repo="${SKILLS_REPO:-AssetsArt/skills}"`. **Print it
    to stderr before any download** so users see what they're pulling from.
@@ -361,8 +347,9 @@ darwin → agent runs `./scripts/<name>` directly.
 8. Add `scripts/install.sh` with the staging + checksum + entry-audit flow.
 9. Add `.github/workflows/release.yml` with pinned action SHAs, explicit
    `permissions:`, the 6-target matrix (gnu/musl × x86_64/aarch64 + macos
-   x86_64/aarch64), per-slug toolchain setup including the pinned
-   `musl.cc` aarch64 tarball, pair audit, and checksum emission.
+   x86_64/aarch64), `cross-rs/cross` (pinned tag) for the 3 non-host Linux
+   slugs, `RUSTFLAGS=-C target-feature=+crt-static` for the musl jobs, both
+   macOS slugs built on `macos-latest`, pair audit, and checksum emission.
 10. Single commit per logical step (migration / build script / docs /
     install script / release workflow) so history stays bisectable.
 
@@ -380,8 +367,8 @@ darwin → agent runs `./scripts/<name>` directly.
 | `install.sh`      | checksum mismatch                         | delete stage, exit 1; previously installed binary untouched                                |
 | `install.sh`      | tar entry audit fails                     | exit 1 before extraction; previously installed binary untouched                            |
 | `release.yml`     | crate without matching `skills/<name>/`   | `::error::` annotation, fail the job (caught by pair-audit step)                           |
-| `release.yml`     | linux-musl-aarch64 toolchain SHA mismatch | `sha256sum -c` exits non-zero; job fails before any cargo build                            |
-| `release.yml`     | cross-compile / linker failure            | `set -e` exits; retry via `workflow_dispatch` against the same tag                         |
+| `release.yml`     | `cargo install cross` upstream outage     | `set -e` exits; retry via `workflow_dispatch` against the same tag once upstream recovers  |
+| `release.yml`     | `cross build` / linker failure            | `set -e` exits; retry via `workflow_dispatch` against the same tag                         |
 | `release.yml`     | `workflow_dispatch` against a branch      | early-exit guard on `github.ref_type == 'tag'`                                             |
 
 ## Security & integrity model
@@ -392,10 +379,12 @@ darwin → agent runs `./scripts/<name>` directly.
 - **Build integrity:** release runs on GitHub-hosted runners. All
   third-party actions (`actions/checkout`, `dtolnay/rust-toolchain`,
   `softprops/action-gh-release`) are pinned to commit SHAs to prevent
-  upstream tag-rewrite attacks. The `linux-musl-aarch64` toolchain is
-  downloaded from `musl.cc` once per job and its SHA-256 is pinned in the
-  workflow; a tarball whose hash doesn't match fails the job before cargo
-  runs. Refreshing that pin requires a reviewed PR — it is never auto-bumped.
+  upstream tag-rewrite attacks. The `cross-rs/cross` installation pins a
+  specific upstream tag (`cargo install cross --git ... --tag <pinned>`);
+  pin refreshes go through a reviewed PR — never auto-bumped. Cross brings
+  its own per-target Docker image that includes the cross-compiler and
+  matching libc, so the workflow no longer pulls a third-party toolchain
+  tarball directly.
 - **Distribution integrity:** every tarball is paired with a `.sha256`
   generated in the same job that built it. `install.sh` verifies the
   checksum before extraction and refuses tarballs containing absolute paths
