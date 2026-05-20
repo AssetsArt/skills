@@ -39,10 +39,12 @@ Release tarballs will be paired with `.sha256` companions generated in the same 
 
 ## Adding a new skill
 
-1. Create `skills/<your-skill>/` with its own `Cargo.toml` (use `codemap` as a template).
-2. Inherit shared metadata via `package.license.workspace = true`, etc.
-3. Add a `SKILL.md` (frontmatter `name` + `description`) so agents can discover it.
-4. Add a row to the table above.
+The repo follows two conventions: source lives in `crates/<name>/`, and the agent-installed surface lives in `skills/ny-<name>/`. The mapping `skill_dir == "ny-" + crate_name` is load-bearing — `build-skills.sh`, `install.sh`, and `release.yml` all rely on it.
+
+1. Create `crates/<name>/` (with `Cargo.toml`, `src/main.rs`, etc. — use `crates/codemap` as a template). Inherit shared metadata via `version.workspace = true`, `license.workspace = true`, etc.
+2. Create `skills/ny-<name>/SKILL.md` with frontmatter `name: ny-<name>` and a `description` field so agents can discover it. Reference the binary as `./scripts/<name>` (the pre-built file lives at `skills/ny-<name>/scripts/<name>`; the `scripts/` directory is gitignored).
+3. Add a row to the Skill Index table above: link `[ny-<name>](./skills/ny-<name>)`, crate column `` `crates/<name>` ``.
+4. Run `./scripts/build-skills.sh` to verify the local build pipeline picks up the new skill. The release workflow does not require changes — its matrix is per-target, not per-skill.
 
 ## Versioning
 
