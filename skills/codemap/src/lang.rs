@@ -47,7 +47,7 @@ impl Language {
         match self {
             Language::Rust => Some(include_str!("queries/rust.scm")),
             // The remaining branches are wired up in Tasks 9–11.
-            Language::TypeScript | Language::Tsx => None,
+            Language::TypeScript | Language::Tsx => Some(include_str!("queries/typescript.scm")),
             Language::JavaScript => None,
             Language::Python => None,
         }
