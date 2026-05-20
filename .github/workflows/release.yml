@@ -76,6 +76,10 @@ jobs:
               exit 1
             fi
           done
+          if [ "${#crates[@]}" -eq 0 ]; then
+            echo "::error::no crates found under crates/ -- nothing to package"
+            exit 1
+          fi
           echo "packaging ${#crates[@]} crate/skill pair(s) for ${{ matrix.slug }}"
 
       - name: Build (cargo)
@@ -95,11 +99,11 @@ jobs:
           triple="${{ matrix.triple }}"
           out="release-assets"
           mkdir -p "$out"
-          if command -v sha256sum >/dev/null; then SHA="sha256sum"; else SHA="shasum -a 256"; fi
+          if command -v sha256sum >/dev/null; then SHA=(sha256sum); else SHA=(shasum -a 256); fi
           for crate in crates/*/; do
             name=$(basename "$crate")
             tar -C "target/$triple/release" -czf "$out/$name-$tag-$slug.tar.gz" "$name"
-            ( cd "$out" && $SHA "$name-$tag-$slug.tar.gz" > "$name-$tag-$slug.sha256" )
+            ( cd "$out" && "${SHA[@]}" "$name-$tag-$slug.tar.gz" > "$name-$tag-$slug.sha256" )
             echo "packaged $out/$name-$tag-$slug.tar.gz"
           done
 
