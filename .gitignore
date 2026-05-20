@@ -4,3 +4,5 @@
 .idea/
 .vscode/
 *.swp
+# Per-skill built binaries (produced by scripts/build-skills.sh or scripts/install.sh)
+skills/*/scripts/
