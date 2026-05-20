@@ -16,14 +16,26 @@
 
 ## Install (end users)
 
+### One-liner (no clone)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh
+# pin a specific version:
+curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh -s -- v0.1.2
+```
+
+The script fetches the repo's source tarball at the resolved tag (no `git` required) and stages each skill into `~/.claude/skills/ny-<name>/`. Override the destination with `CLAUDE_SKILLS_DIR=/some/path`.
+
+### From a checkout
+
 ```bash
 ./scripts/install.sh           # downloads the latest release for your platform
 ./scripts/install.sh v0.1.1    # or pin a specific version
 ```
 
-Supported asset slugs: `linux-gnu-x86_64`, `linux-gnu-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `macos-x86_64`, `macos-aarch64`. The script auto-detects the right slug from `uname` + libc probe; override with `SKILLS_TARGET=<slug>` if you need to (e.g. installing into an Alpine container from a glibc host). If you hit GitHub's 60/hr unauthenticated API rate limit, export `GITHUB_TOKEN` before running.
+Either entry point lands the binary at `skills/ny-<name>/scripts/<name>` and also copies the skill dir into `~/.claude/skills/ny-<name>/` so Claude can discover it. If a `~/.claude/skills/ny-<name>` already exists as a symlink (manual setup), the script leaves it alone.
 
-After install, every skill exposes its binary at `skills/<name>/scripts/<name>` -- the `SKILL.md` manifest invokes it from there.
+Supported asset slugs: `linux-gnu-x86_64`, `linux-gnu-aarch64`, `linux-musl-x86_64`, `linux-musl-aarch64`, `macos-x86_64`, `macos-aarch64`. The script auto-detects the right slug from `uname` + libc probe; override with `SKILLS_TARGET=<slug>` if you need to (e.g. installing into an Alpine container from a glibc host). If you hit GitHub's 60/hr unauthenticated API rate limit, export `GITHUB_TOKEN` before running.
 
 ## Build from source (developers)
 

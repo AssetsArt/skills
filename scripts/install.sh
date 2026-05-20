@@ -8,6 +8,7 @@
 #   ./scripts/install.sh v0.1.0          # pinned version
 #   SKILLS_TARGET=macos-aarch64 ./scripts/install.sh
 #   SKILLS_REPO=fork/skills GITHUB_TOKEN=... ./scripts/install.sh
+#   CLAUDE_SKILLS_DIR=/path/to/skills ./scripts/install.sh   # override register dest
 set -eu
 
 # Closed allowlist. Anything outside this set is rejected -- both the auto-
@@ -135,10 +136,40 @@ echo "installing version: $tag (slug $slug)" >&2
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
+# Bootstrap (curl | sh mode): when there is no skills/ at cwd, this script was
+# almost certainly piped from a remote URL with no local checkout. Pull the
+# source tarball at the resolved tag and chdir into it so the per-skill walk
+# below has skills/ny-*/ to discover. curl + tar only -- no git dependency.
+bootstrap_dir=""
+if [ ! -d "skills" ]; then
+  echo "no skills/ at $(pwd); bootstrapping from $repo @ $tag" >&2
+  bootstrap_dir="$(mktemp -d 2>/dev/null || mktemp -d -t skills-bootstrap)"
+  if ! api_curl -o "$bootstrap_dir/repo.tar.gz" "https://api.github.com/repos/$repo/tarball/$tag" 2>/dev/null; then
+    rm -rf "$bootstrap_dir"
+    echo "error: failed to fetch tarball https://api.github.com/repos/$repo/tarball/$tag" >&2
+    exit 1
+  fi
+  tar -xzf "$bootstrap_dir/repo.tar.gz" -C "$bootstrap_dir"
+  # GitHub tarballs expand to <owner>-<repo>-<sha7>/. Pick the first dir.
+  bootstrap_root=""
+  for d in "$bootstrap_dir"/*/; do
+    [ -d "$d" ] || continue
+    bootstrap_root="${d%/}"
+    break
+  done
+  if [ -z "$bootstrap_root" ] || [ ! -d "$bootstrap_root/skills" ]; then
+    rm -rf "$bootstrap_dir"
+    echo "error: source tarball for $tag did not contain a skills/ dir" >&2
+    exit 1
+  fi
+  cd "$bootstrap_root"
+fi
+
 installed=0
 for skill_dir in skills/*/; do
   [ -d "$skill_dir" ] || continue
   skill="$(basename "$skill_dir")"
+  skill_src="${skill_dir%/}"
 
   # Convention: skill dir is "ny-<crate>"; the release asset uses the bare
   # crate name. Strip the prefix here so the URL is "codemap-<tag>-<slug>",
@@ -213,21 +244,44 @@ for skill_dir in skills/*/; do
     exit 1
   fi
 
-  mkdir -p "$skill_dir/scripts"
+  mkdir -p "$skill_src/scripts"
   chmod +x "$stage/$crate"
-  mv -f "$stage/$crate" "$skill_dir/scripts/$crate"
+  mv -f "$stage/$crate" "$skill_src/scripts/$crate"
 
   # macOS quarantines downloaded binaries; strip the xattr so the user doesn't
   # get a Gatekeeper prompt on first run. Failure is fine (linux, no xattr).
   if [ "$(uname -s)" = "Darwin" ]; then
-    xattr -d com.apple.quarantine "$skill_dir/scripts/$crate" 2>/dev/null || true
+    xattr -d com.apple.quarantine "$skill_src/scripts/$crate" 2>/dev/null || true
   fi
 
-  echo "installed: $skill_dir/scripts/$crate" >&2
+  echo "installed: $skill_src/scripts/$crate" >&2
+
+  # Register the skill in the user's Claude skills dir so it actually becomes
+  # discoverable. Defaults to ~/.claude/skills; override CLAUDE_SKILLS_DIR for
+  # custom installs. A pre-existing symlink is left alone -- it represents a
+  # deliberate manual setup we shouldn't blow away.
+  reg_root="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+  mkdir -p "$reg_root"
+  reg_dest="$reg_root/$skill"
+  if [ -L "$reg_dest" ]; then
+    echo "skip register: $reg_dest is a symlink (manual install); leaving alone" >&2
+  else
+    reg_tmp="$reg_dest.tmp.$$"
+    rm -rf "$reg_tmp"
+    cp -R "$skill_src" "$reg_tmp"
+    rm -rf "$reg_dest"
+    mv "$reg_tmp" "$reg_dest"
+    echo "registered: $reg_dest" >&2
+  fi
+
   installed=$((installed + 1))
 
   rm -rf "$stage"
   trap - EXIT INT TERM
 done
+
+if [ -n "$bootstrap_dir" ]; then
+  rm -rf "$bootstrap_dir"
+fi
 
 echo "installed $installed skill(s) ($slug) at version $tag" >&2
