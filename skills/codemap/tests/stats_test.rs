@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn bin() -> PathBuf { PathBuf::from(env!("CARGO_BIN_EXE_codemap")) }
+fn bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_codemap"))
+}
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_project")
 }
@@ -13,7 +15,11 @@ fn stats_json_returns_per_language_and_per_kind() {
         .arg(fixture())
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
     let d = &v["data"];

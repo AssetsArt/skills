@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn bin() -> PathBuf { PathBuf::from(env!("CARGO_BIN_EXE_codemap")) }
+fn bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_codemap"))
+}
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample_project")
 }
@@ -13,13 +15,22 @@ fn find_substring_matches_across_languages() {
         .arg(fixture())
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
-    let names: Vec<&str> = v["data"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
     assert!(names.contains(&"User"));
     assert!(names.contains(&"UserRepo"));
-    assert!(names.iter().any(|n| *n == "findUser"));
+    assert!(names.contains(&"findUser"));
 }
 
 #[test]

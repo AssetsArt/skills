@@ -17,7 +17,11 @@ fn symbols_rust_single_file() {
         .arg(&file)
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
     let arr = v["data"].as_array().expect("data array");
@@ -63,7 +67,11 @@ fn symbols_typescript_extracts_class_interface_type_fn() {
         .arg(&file)
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     let pairs: Vec<(String, String)> = v["data"]
         .as_array()
@@ -90,7 +98,11 @@ fn symbols_tsx_extracts_function_and_interface() {
         .arg(&file)
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     let pairs: Vec<(String, String)> = v["data"]
         .as_array()
@@ -115,7 +127,11 @@ fn symbols_javascript_extracts_function_and_class() {
         .arg(&file)
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     let pairs: Vec<(String, String)> = v["data"]
         .as_array()
@@ -140,7 +156,11 @@ fn symbols_python_extracts_class_and_top_level_fn() {
         .arg(&file)
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     let pairs: Vec<(String, String)> = v["data"]
         .as_array()
@@ -164,7 +184,11 @@ fn symbols_whole_project_aggregates_all_languages() {
         .arg(fixture())
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     let files: std::collections::HashSet<String> = v["data"]
         .as_array()

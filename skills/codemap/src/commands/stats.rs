@@ -30,7 +30,9 @@ pub fn run(args: StatsArgs) -> Result<()> {
 
     for f in &files {
         total_files += 1;
-        let lines = fs::read_to_string(&f.path).map(|s| s.lines().count()).unwrap_or(0);
+        let lines = fs::read_to_string(&f.path)
+            .map(|s| s.lines().count())
+            .unwrap_or(0);
         total_lines += lines;
         let entry = languages.entry(f.language.name()).or_default();
         entry.files += 1;
@@ -57,7 +59,12 @@ pub fn run(args: StatsArgs) -> Result<()> {
         }
     }
 
-    let report = Report { total_files, total_lines, languages, symbols };
+    let report = Report {
+        total_files,
+        total_lines,
+        languages,
+        symbols,
+    };
     if args.json {
         print_json(&report)?;
     } else {

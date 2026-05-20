@@ -63,9 +63,7 @@ pub fn run(args: SymbolsArgs) -> Result<()> {
 fn parse_kind_filter(raw: &[String]) -> Result<Vec<SymbolKind>> {
     let mut out = Vec::new();
     for k in raw {
-        out.push(
-            SymbolKind::parse(k).ok_or_else(|| anyhow!("unknown --kind value: {k}"))?,
-        );
+        out.push(SymbolKind::parse(k).ok_or_else(|| anyhow!("unknown --kind value: {k}"))?);
     }
     Ok(out)
 }

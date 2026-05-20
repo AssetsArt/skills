@@ -56,8 +56,7 @@ pub fn extract_file(path: &Path, rel_path: &str, language: Language) -> Result<V
     let Some(query_src) = language.query_source() else {
         return Ok(Vec::new());
     };
-    let source = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut parser = Parser::new();
     parser
         .set_language(&language.ts_language())
@@ -100,7 +99,7 @@ pub fn extract_file(path: &Path, rel_path: &str, language: Language) -> Result<V
             signature,
         });
     }
-    out.sort_by(|a, b| a.start_line.cmp(&b.start_line));
+    out.sort_by_key(|s| s.start_line);
     Ok(out)
 }
 

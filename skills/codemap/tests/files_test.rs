@@ -16,7 +16,11 @@ fn files_json_lists_all_supported_extensions() {
         .arg(fixture())
         .output()
         .expect("run codemap");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json");
     assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
     let arr = v["data"].as_array().expect("data array");
@@ -29,8 +33,10 @@ fn files_json_lists_all_supported_extensions() {
     assert!(paths.iter().any(|p| p.ends_with("src/component.tsx")));
     assert!(paths.iter().any(|p| p.ends_with("src/util.js")));
     assert!(paths.iter().any(|p| p.ends_with("app.py")));
-    let langs: std::collections::HashSet<&str> =
-        arr.iter().map(|e| e["language"].as_str().unwrap()).collect();
+    let langs: std::collections::HashSet<&str> = arr
+        .iter()
+        .map(|e| e["language"].as_str().unwrap())
+        .collect();
     for expected in ["rust", "typescript", "tsx", "javascript", "python"] {
         assert!(langs.contains(expected), "missing language {expected}");
     }
@@ -57,7 +63,11 @@ fn tree_json_returns_nested_structure() {
         .arg(fixture())
         .output()
         .expect("run codemap");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json");
     assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
     let tree = &v["data"];
