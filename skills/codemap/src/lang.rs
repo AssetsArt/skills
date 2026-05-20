@@ -1,3 +1,5 @@
+use tree_sitter::Language as TsLanguage;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     Rust,
@@ -26,6 +28,28 @@ impl Language {
             "js" | "mjs" | "cjs" => Some(Language::JavaScript),
             "py" => Some(Language::Python),
             _ => None,
+        }
+    }
+
+    pub fn ts_language(self) -> TsLanguage {
+        match self {
+            Language::Rust => tree_sitter_rust::language(),
+            Language::TypeScript => tree_sitter_typescript::language_typescript(),
+            Language::Tsx => tree_sitter_typescript::language_tsx(),
+            Language::JavaScript => tree_sitter_javascript::language(),
+            Language::Python => tree_sitter_python::language(),
+        }
+    }
+
+    /// Returns `None` for languages whose symbol query hasn't been wired up yet.
+    /// `Some("")` is intentionally not a valid state.
+    pub fn query_source(self) -> Option<&'static str> {
+        match self {
+            Language::Rust => Some(include_str!("queries/rust.scm")),
+            // The remaining branches are wired up in Tasks 9–11.
+            Language::TypeScript | Language::Tsx => None,
+            Language::JavaScript => None,
+            Language::Python => None,
         }
     }
 }

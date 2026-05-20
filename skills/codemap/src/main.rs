@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod lang;
 mod output;
+mod symbols;
 mod walk;
 
 use clap::Parser;
