@@ -51,10 +51,10 @@ All subcommands accept `--path <DIR>` (default `.`) and `--json` (default human-
 ## Examples
 
 ```bash
-codemap files --json --path ./my-repo
-codemap symbols src/lib.rs --json --kind fn,struct --path ./my-repo
-codemap find UserRepo --exact --json
-codemap stats
+./scripts/codemap files --json --path ./my-repo
+./scripts/codemap symbols src/lib.rs --json --kind fn,struct --path ./my-repo
+./scripts/codemap find UserRepo --exact --json
+./scripts/codemap stats
 ```
 
 ## Supported languages
