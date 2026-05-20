@@ -14,7 +14,7 @@ cargo build --release -p codemap
 Or, from the workspace root:
 
 ```bash
-cargo install --path skills/codemap
+cargo install --path crates/codemap
 ```
 
 ## JSON envelope
