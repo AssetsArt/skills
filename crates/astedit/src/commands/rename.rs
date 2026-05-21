@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use codegraph_core::index::build_index;
 use codegraph_core::resolve::{resolve_refs, Confidence, Resolved};
 
@@ -16,30 +14,56 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     let mut skipped: Vec<SkippedSite> = Vec::new();
     let errors: Vec<crate::serialize::ErrorEntry> = Vec::new();
 
-    // Group queue-for-edit refs by file. Low confidence and re-export traversal
-    // become Skipped — wired in later tasks of PR 2.
-    let mut by_file: BTreeMap<String, Vec<&Resolved>> = BTreeMap::new();
+    // Low-confidence refs go to skipped[low-confidence] (Task 11).
     for r in &resolved {
-        match r.confidence {
-            Confidence::High | Confidence::Medium => {
-                by_file.entry(r.reference.file.clone()).or_default().push(r);
-            }
-            Confidence::Low => {
-                skipped.push(SkippedSite {
-                    file: r.reference.file.clone(),
-                    line: r.reference.line,
-                    col: r.reference.column,
-                    start_byte: r.reference.byte_offset,
-                    end_byte: r.reference.byte_offset + args.old.len(),
-                    name: r.reference.name.clone(),
-                    confidence: r.confidence.as_str(),
-                    reason: r.reason.as_str(),
-                    skip_reason: "low-confidence",
-                    via_alias: None,
-                    via_module: None,
-                });
-            }
+        if matches!(r.confidence, Confidence::Low) {
+            skipped.push(SkippedSite {
+                file: r.reference.file.clone(),
+                line: r.reference.line,
+                col: r.reference.column,
+                start_byte: r.reference.byte_offset,
+                end_byte: r.reference.byte_offset + args.old.len(),
+                name: r.reference.name.clone(),
+                confidence: r.confidence.as_str(),
+                reason: r.reason.as_str(),
+                skip_reason: "low-confidence",
+                via_alias: None,
+                via_module: None,
+            });
         }
+    }
+
+    // Alias re-export sites → skipped[re-export-alias].
+    if let Some(sites) = index.alias_reexports.get(&args.old) {
+        for site in sites {
+            skipped.push(SkippedSite {
+                file: site.file.clone(),
+                line: site.line,
+                col: 0,
+                start_byte: 0,
+                end_byte: 0,
+                name: args.old.clone(),
+                confidence: "high",
+                reason: "same-file-scope",
+                skip_reason: "re-export-alias",
+                via_alias: Some(site.original.clone()),
+                via_module: None,
+            });
+        }
+    }
+
+    // High/Medium → queued for edit, minus any collision with an alias site.
+    let alias_keys: std::collections::HashSet<(String, usize)> = index
+        .alias_reexports
+        .get(&args.old)
+        .map(|sites| sites.iter().map(|s| (s.file.clone(), s.line)).collect())
+        .unwrap_or_default();
+
+    let mut by_file: std::collections::BTreeMap<String, Vec<&Resolved>> = Default::default();
+    for r in &resolved {
+        if !matches!(r.confidence, Confidence::High | Confidence::Medium) { continue; }
+        if alias_keys.contains(&(r.reference.file.clone(), r.reference.line)) { continue; }
+        by_file.entry(r.reference.file.clone()).or_default().push(r);
     }
 
     for (file, refs) in by_file {

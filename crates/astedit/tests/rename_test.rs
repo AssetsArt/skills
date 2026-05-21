@@ -147,3 +147,33 @@ fn rename_name_only_goes_to_skipped_low_confidence() {
         .find(|f| f["file"].as_str().unwrap().ends_with("unrelated.rs"));
     assert!(bad.is_none(), "unrelated.rs should not be in applied: {bad:?}");
 }
+
+#[test]
+fn rename_alias_reexport_skipped_with_via_alias() {
+    let tmp = copy_fixture("alias_reexport");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+
+    let skipped = data["skipped"].as_array().expect("skipped array");
+    let aliases: Vec<&serde_json::Value> = skipped.iter()
+        .filter(|s| s["skip_reason"] == "re-export-alias")
+        .collect();
+    assert_eq!(aliases.len(), 1, "expected one alias skip; got {skipped:?}");
+
+    let alias = aliases[0];
+    assert!(alias["file"].as_str().unwrap().ends_with("lib.rs"));
+    assert_eq!(alias["name"], "User");
+    assert_eq!(alias["via_alias"], "Bar", "via_alias should be the original symbol");
+    match alias.get("via_module") {
+        None => {},
+        Some(v) if v.is_null() => {},
+        Some(other) => panic!("via_module must not appear on re-export-alias entries: {other:?}"),
+    }
+}
