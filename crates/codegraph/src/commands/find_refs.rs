@@ -1,6 +1,7 @@
 use crate::cli::FindRefsArgs;
 use crate::index::{build_index, RefKind};
 use crate::output::print_json;
+use crate::resolve::resolve_refs;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -32,23 +33,21 @@ pub fn run(args: FindRefsArgs) -> anyhow::Result<()> {
             });
         }
     }
-    for r in &idx.references {
-        if r.name == args.name {
-            let kind = match r.kind {
-                RefKind::Call => "call",
-                RefKind::Reference => "reference",
-            };
-            hits.push(Hit {
-                file: r.file.clone(),
-                line: r.line,
-                column: r.column,
-                kind,
-                name: r.name.clone(),
-                context: r.context.clone(),
-                confidence: "low",
-                reason: "name-only",
-            });
-        }
+    for r in resolve_refs(&idx, &args.name) {
+        let kind = match r.reference.kind {
+            RefKind::Call => "call",
+            RefKind::Reference => "reference",
+        };
+        hits.push(Hit {
+            file: r.reference.file.clone(),
+            line: r.reference.line,
+            column: r.reference.column,
+            kind,
+            name: r.reference.name.clone(),
+            context: r.reference.context.clone(),
+            confidence: r.confidence.as_str(),
+            reason: r.reason.as_str(),
+        });
     }
     hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
     if args.json {

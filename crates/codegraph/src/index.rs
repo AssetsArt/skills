@@ -131,7 +131,7 @@ pub fn build_index(root: &Path) -> Result<Index> {
             // (node kinds drift across tree-sitter releases), skip imports for this
             // file rather than abort the whole index.
             if let Err(e) = index_imports(&mut idx, &source, &rel, f.language, q) {
-                eprintln!("codegraph: imports query skipped for {rel}: {e}");
+                eprintln!("codegraph: imports query skipped for {rel}: {e:#}");
             }
         }
         if let Some(q) = f.language.query_source(QueryKind::Refs) {

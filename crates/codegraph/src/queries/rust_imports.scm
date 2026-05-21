@@ -16,8 +16,10 @@
     path: (_) @path
     list: (use_list) @group)) @import
 
-; Glob: use crate::*;
+; Glob: use crate::auth::*;
+; The grammar represents `path::*` as use_wildcard { child: path_node },
+; NOT as scoped_use_list { list: use_wildcard } — the latter is impossible
+; per node-types.json (scoped_use_list.list only accepts use_list).
 (use_declaration
-  argument: (scoped_use_list
-    path: (_) @path
-    list: (use_wildcard))) @import
+  argument: (use_wildcard
+    (_) @path)) @import
