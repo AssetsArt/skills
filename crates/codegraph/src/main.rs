@@ -1,8 +1,6 @@
 mod cli;
 mod commands;
-mod index;
 mod output;
-mod resolve;
 
 use clap::Parser;
 use cli::{Cli, Command};

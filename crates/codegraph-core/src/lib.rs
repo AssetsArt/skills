@@ -9,3 +9,7 @@
 pub mod lang;
 
 pub mod walk;
+
+pub mod resolve;
+
+pub mod index;
