@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod index;
 mod lang;
 mod output;
 mod walk;
