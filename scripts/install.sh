@@ -133,16 +133,34 @@ fi
 
 echo "installing version: $tag (slug $slug)" >&2
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$repo_root"
+# Only chdir into the script's containing checkout when $0 actually points at a
+# file path -- under `curl | sh`, $0 is the interpreter name (e.g. "sh") with no
+# directory component, and `cd "$(dirname sh)/.."` would resolve to the parent
+# of the user's CWD and then iterate whatever sits there. The bootstrap branch
+# below handles the no-local-checkout case explicitly.
+case "$0" in
+  */*)
+    if [ -f "$0" ]; then
+      repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+      cd "$repo_root"
+    fi
+    ;;
+esac
 
-# Bootstrap (curl | sh mode): when there is no skills/ at cwd, this script was
-# almost certainly piped from a remote URL with no local checkout. Pull the
-# source tarball at the resolved tag and chdir into it so the per-skill walk
-# below has skills/ny-*/ to discover. curl + tar only -- no git dependency.
+# Bootstrap (curl | sh mode): when the current dir doesn't look like a skills
+# checkout (no skills/ny-*/SKILL.md visible), pull the source tarball at the
+# resolved tag and chdir into it so the per-skill walk below has skills/ny-*/
+# to discover. curl + tar only -- no git dependency.
+have_local_checkout=0
+for skill_md in skills/ny-*/SKILL.md; do
+  [ -f "$skill_md" ] || continue
+  have_local_checkout=1
+  break
+done
+
 bootstrap_dir=""
-if [ ! -d "skills" ]; then
-  echo "no skills/ at $(pwd); bootstrapping from $repo @ $tag" >&2
+if [ "$have_local_checkout" = "0" ]; then
+  echo "no skills/ny-* checkout at $(pwd); bootstrapping from $repo @ $tag" >&2
   bootstrap_dir="$(mktemp -d 2>/dev/null || mktemp -d -t skills-bootstrap)"
   if ! api_curl -o "$bootstrap_dir/repo.tar.gz" "https://api.github.com/repos/$repo/tarball/$tag" 2>/dev/null; then
     rm -rf "$bootstrap_dir"
