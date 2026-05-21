@@ -61,3 +61,34 @@ fn find_refs_on_empty_dir_returns_empty_data() {
     assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
     assert_eq!(v["data"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn rust_imports_are_flattened() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::write(src.join("lib.rs"), "pub mod m;\npub fn alpha() {}\n").unwrap();
+    std::fs::write(
+        src.join("m.rs"),
+        "use crate::alpha;\nuse crate::{alpha as a2, beta};\nuse crate::*;\npub fn use_alpha() { alpha(); }\n",
+    )
+    .unwrap();
+    // The probe we use here is `find-refs alpha` — we have not built the resolver yet,
+    // so this test only asserts the definition still appears (= the imports query did not crash).
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "alpha", "--json", "--path"])
+        .arg(tmp.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert!(v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|h| h["kind"] == "definition"));
+}

@@ -69,7 +69,6 @@ pub struct Reference {
 #[derive(Debug, Default)]
 pub struct Index {
     pub definitions: Vec<Definition>,
-    #[allow(dead_code)] // wired in Task 6
     pub imports: Vec<Import>,
     #[allow(dead_code)] // wired in Task 7
     pub references: Vec<Reference>,
@@ -129,6 +128,14 @@ pub fn build_index(root: &Path) -> Result<Index> {
         if let Some(q) = f.language.query_source(QueryKind::Defs) {
             index_defs(&mut idx, &source, &rel, f.language, q)?;
         }
+        if let Some(q) = f.language.query_source(QueryKind::Imports) {
+            // Best-effort: if the query fails to compile against the live grammar
+            // (node kinds drift across tree-sitter releases), skip imports for this
+            // file rather than abort the whole index.
+            if let Err(e) = index_imports(&mut idx, &source, &rel, f.language, q) {
+                eprintln!("codegraph: imports query skipped for {rel}: {e}");
+            }
+        }
     }
     Ok(idx)
 }
@@ -180,6 +187,123 @@ fn index_defs(
             body_end_byte: node.end_byte(),
             exported,
         });
+    }
+    Ok(())
+}
+
+fn index_imports(
+    idx: &mut Index,
+    source: &str,
+    rel: &str,
+    lang: Language,
+    query_src: &str,
+) -> Result<()> {
+    let ts = lang.ts_language();
+    let mut parser = Parser::new();
+    parser.set_language(&ts)?;
+    let tree = parser.parse(source, None).context("parse")?;
+    let query = Query::new(&ts, query_src).context("compile imports query")?;
+    let names = query.capture_names();
+    let bytes = source.as_bytes();
+    let mut cursor = QueryCursor::new();
+    for m in cursor.matches(&query, tree.root_node(), bytes) {
+        let mut path_text: Option<String> = None;
+        let mut single_name: Option<String> = None;
+        let mut alias: Option<String> = None;
+        let mut group_node: Option<tree_sitter::Node<'_>> = None;
+        let mut import_node: Option<tree_sitter::Node<'_>> = None;
+        for cap in m.captures {
+            let cname = names[cap.index as usize];
+            let text = cap.node.utf8_text(bytes).unwrap_or("").to_string();
+            match cname {
+                "path" => path_text = Some(text),
+                "name" => single_name = Some(text),
+                "alias" => alias = Some(text),
+                "group" => group_node = Some(cap.node),
+                "import" => import_node = Some(cap.node),
+                _ => {}
+            }
+        }
+        let line = import_node.map(|n| n.start_position().row + 1).unwrap_or(0);
+        let module_path = path_text.unwrap_or_default();
+
+        match (single_name, alias, group_node) {
+            (Some(n), _, _) => {
+                idx.imports.push(Import {
+                    file: rel.to_string(),
+                    line,
+                    local_name: n.clone(),
+                    imported_name: n,
+                    module_path: module_path.clone(),
+                });
+            }
+            (_, Some(a), _) => {
+                // `use foo::bar as a;` — alias is the local name, the last segment of path is imported_name.
+                let imported = module_path
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&module_path)
+                    .to_string();
+                idx.imports.push(Import {
+                    file: rel.to_string(),
+                    line,
+                    local_name: a,
+                    imported_name: imported,
+                    module_path,
+                });
+            }
+            (_, _, Some(group)) => {
+                // Walk the group node's `(identifier)` and `(use_as_clause)` children.
+                let mut cur = group.walk();
+                for child in group.children(&mut cur) {
+                    match child.kind() {
+                        "identifier" => {
+                            let nm = child.utf8_text(bytes).unwrap_or("").to_string();
+                            idx.imports.push(Import {
+                                file: rel.to_string(),
+                                line,
+                                local_name: nm.clone(),
+                                imported_name: nm,
+                                module_path: module_path.clone(),
+                            });
+                        }
+                        "use_as_clause" => {
+                            // First identifier child = imported, alias child = local.
+                            let mut sub = child.walk();
+                            let mut kids = child
+                                .children(&mut sub)
+                                .filter(|n| n.kind() == "identifier");
+                            let imp = kids
+                                .next()
+                                .map(|n| n.utf8_text(bytes).unwrap_or("").to_string())
+                                .unwrap_or_default();
+                            let als = kids
+                                .next()
+                                .map(|n| n.utf8_text(bytes).unwrap_or("").to_string())
+                                .unwrap_or_else(|| imp.clone());
+                            idx.imports.push(Import {
+                                file: rel.to_string(),
+                                line,
+                                local_name: als,
+                                imported_name: imp,
+                                module_path: module_path.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {
+                // Glob `use foo::*;` — record one wildcard entry.
+                idx.imports.push(Import {
+                    file: rel.to_string(),
+                    line,
+                    local_name: "*".to_string(),
+                    imported_name: "*".to_string(),
+                    module_path,
+                });
+            }
+        }
     }
     Ok(())
 }
