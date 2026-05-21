@@ -1,7 +1,7 @@
 use crate::cli::CallersArgs;
-use crate::index::{build_index, DefKind, RefKind};
+use codegraph_core::index::{build_index, DefKind, RefKind};
 use crate::output::print_json;
-use crate::resolve::resolve_refs;
+use codegraph_core::resolve::resolve_refs;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 

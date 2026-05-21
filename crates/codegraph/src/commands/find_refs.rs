@@ -1,7 +1,7 @@
 use crate::cli::FindRefsArgs;
-use crate::index::{build_index, RefKind};
+use codegraph_core::index::{build_index, RefKind};
 use crate::output::print_json;
-use crate::resolve::resolve_refs;
+use codegraph_core::resolve::resolve_refs;
 use serde::Serialize;
 
 #[derive(Serialize)]

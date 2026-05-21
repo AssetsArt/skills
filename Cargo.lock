@@ -150,15 +150,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "ignore",
+ "codegraph-core",
  "serde",
  "serde_json",
  "tempfile",
- "tree-sitter",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
 ]
 
 [[package]]
