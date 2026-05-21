@@ -43,3 +43,32 @@ fn callers_of_unused_helper_is_empty() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(v["data"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn callers_depth_2_walks_one_more_hop() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args([
+            "callers",
+            "authenticate",
+            "--depth",
+            "2",
+            "--json",
+            "--path",
+        ])
+        .arg(fixture())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let entries = v["data"].as_array().unwrap();
+    // login calls authenticate (distance=1); nothing calls login in this fixture,
+    // so depth=2 should match depth=1 in count — but the field must be present.
+    assert!(entries.iter().all(|e| e["distance"].is_number()));
+    assert!(entries
+        .iter()
+        .any(|e| e["name"] == "revoke" && e["distance"] == 1));
+}

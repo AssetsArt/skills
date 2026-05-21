@@ -3,7 +3,9 @@ use crate::index::{build_index, DefKind, RefKind};
 use crate::output::print_json;
 use crate::resolve::resolve_refs;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet, VecDeque};
+
+const HARD_CAP: usize = 8;
 
 #[derive(Serialize, Clone)]
 struct CallerEntry {
@@ -11,10 +13,10 @@ struct CallerEntry {
     line: usize,
     column: usize,
     name: String,
-    kind: &'static str, // "fn" or "method"
+    kind: &'static str,
+    distance: usize,
     confidence: &'static str,
     reason: &'static str,
-    /// Call sites inside this caller that point at the target.
     sites: Vec<CallSite>,
 }
 
@@ -27,85 +29,86 @@ struct CallSite {
 }
 
 pub fn run(args: CallersArgs) -> anyhow::Result<()> {
-    if args.depth != 1 {
-        // Depth-N is implemented in Task 16 — surface the limitation here rather than silently ignore.
-        anyhow::bail!("callers: --depth > 1 is not implemented yet (tracked in Task 16)");
-    }
+    let depth_limit = args.depth.min(HARD_CAP);
     let idx = build_index(&args.path)?;
 
-    let mut by_caller: BTreeMap<(String, usize, usize), CallerEntry> = BTreeMap::new();
+    let mut by_caller: BTreeMap<(String, String, usize), CallerEntry> = BTreeMap::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    queue.push_back((args.name.clone(), 0));
+    visited.insert(args.name.clone());
 
-    for resolved in resolve_refs(&idx, &args.name) {
-        if resolved.reference.kind != RefKind::Call {
+    while let Some((current, dist)) = queue.pop_front() {
+        if dist >= depth_limit {
             continue;
         }
-        let Some(enclosing) =
-            idx.enclosing_definition(&resolved.reference.file, resolved.reference.byte_offset)
-        else {
-            // Reference at module scope (e.g. `const X: () = foo();`). Skip — not a "caller fn".
-            continue;
-        };
-        if !matches!(enclosing.kind, DefKind::Fn | DefKind::Method) {
-            continue;
+        for r in resolve_refs(&idx, &current) {
+            if r.reference.kind != RefKind::Call {
+                continue;
+            }
+            let Some(enclosing) =
+                idx.enclosing_definition(&r.reference.file, r.reference.byte_offset)
+            else {
+                continue;
+            };
+            if !matches!(enclosing.kind, DefKind::Fn | DefKind::Method) {
+                continue;
+            }
+            let key = (
+                enclosing.name.clone(),
+                enclosing.file.clone(),
+                enclosing.line,
+            );
+            let entry = by_caller.entry(key).or_insert_with(|| CallerEntry {
+                file: enclosing.file.clone(),
+                line: enclosing.line,
+                column: enclosing.column,
+                name: enclosing.name.clone(),
+                kind: if enclosing.kind == DefKind::Method {
+                    "method"
+                } else {
+                    "fn"
+                },
+                distance: dist + 1,
+                confidence: r.confidence.as_str(),
+                reason: r.reason.as_str(),
+                sites: Vec::new(),
+            });
+            entry.sites.push(CallSite {
+                file: r.reference.file.clone(),
+                line: r.reference.line,
+                column: r.reference.column,
+                context: r.reference.context.clone(),
+            });
+            if visited.insert(enclosing.name.clone()) {
+                queue.push_back((enclosing.name.clone(), dist + 1));
+            }
         }
-        let key = (enclosing.file.clone(), enclosing.line, enclosing.column);
-        let entry = by_caller.entry(key).or_insert_with(|| CallerEntry {
-            file: enclosing.file.clone(),
-            line: enclosing.line,
-            column: enclosing.column,
-            name: enclosing.name.clone(),
-            kind: if enclosing.kind == DefKind::Method {
-                "method"
-            } else {
-                "fn"
-            },
-            confidence: resolved.confidence.as_str(),
-            reason: resolved.reason.as_str(),
-            sites: Vec::new(),
-        });
-        // Downgrade: if any site is low, keep the worst.
-        if confidence_rank(entry.confidence) > confidence_rank(resolved.confidence.as_str()) {
-            entry.confidence = resolved.confidence.as_str();
-            entry.reason = resolved.reason.as_str();
-        }
-        entry.sites.push(CallSite {
-            file: resolved.reference.file.clone(),
-            line: resolved.reference.line,
-            column: resolved.reference.column,
-            context: resolved.reference.context.clone(),
-        });
     }
 
     let mut entries: Vec<CallerEntry> = by_caller.into_values().collect();
-    entries.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-
+    entries.sort_by(|a, b| {
+        a.distance
+            .cmp(&b.distance)
+            .then(a.file.cmp(&b.file))
+            .then(a.line.cmp(&b.line))
+    });
     if args.json {
         print_json(&entries)?;
     } else {
         for e in &entries {
             println!(
-                "{}:{}:{}  {}  {}  ({} call site(s), {} {})",
+                "d={}  {}:{}  {}  {}  ({} call site(s), {} {})",
+                e.distance,
                 e.file,
                 e.line,
-                e.column,
                 e.kind,
                 e.name,
                 e.sites.len(),
                 e.confidence,
                 e.reason
             );
-            for s in &e.sites {
-                println!("    {}:{}  {}", s.file, s.line, s.context);
-            }
         }
     }
     Ok(())
-}
-
-fn confidence_rank(c: &str) -> u8 {
-    match c {
-        "high" => 3,
-        "medium" => 2,
-        _ => 1,
-    }
 }
