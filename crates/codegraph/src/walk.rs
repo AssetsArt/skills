@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::lang::Language;
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use tree_sitter::Language as TsLanguage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +10,7 @@ pub enum Language {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Imports/Refs wired in Tasks 6/8
 pub enum QueryKind {
     Defs,
     Imports,
@@ -52,7 +51,10 @@ impl Language {
 
     /// Returns `None` when the query for `(language, kind)` is not wired up yet.
     /// Tasks 3, 6, 8, 16, 17, 18 fill these in.
-    pub fn query_source(self, _kind: QueryKind) -> Option<&'static str> {
-        None
+    pub fn query_source(self, kind: QueryKind) -> Option<&'static str> {
+        match (self, kind) {
+            (Language::Rust, QueryKind::Defs) => Some(include_str!("queries/rust_defs.scm")),
+            _ => None,
+        }
     }
 }
