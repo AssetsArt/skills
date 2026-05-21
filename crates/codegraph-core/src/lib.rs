@@ -5,3 +5,5 @@
 //!
 //! Stability: every additive public type is marked `#[non_exhaustive]`. Add
 //! fields freely; never delete or repurpose.
+
+pub mod lang;
