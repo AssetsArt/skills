@@ -74,6 +74,31 @@ pub struct FileMeta {
     pub len: u64,
 }
 
+/// One `pub use foo::Bar as Baz;` style alias re-export. Records both names
+/// so the rename pipeline can surface the site under `skip_reason:
+/// "re-export-alias"` with a `via_alias` field.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct AliasSite {
+    pub file: String,
+    pub line: usize,
+    pub alias: String,
+    pub original: String,
+    pub module_path: String,
+}
+
+/// One `pub use foo::*;` style wildcard re-export. The set of symbols that
+/// cross the boundary cannot be known without parsing the target module's
+/// exports, so the rename pipeline surfaces these under `skip_reason:
+/// "wildcard-reexport"` with a `via_module` field.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct WildcardSite {
+    pub file: String,
+    pub line: usize,
+    pub module_path: String,
+}
+
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Index {
@@ -81,6 +106,8 @@ pub struct Index {
     pub imports: Vec<Import>,
     pub references: Vec<Reference>,
     pub file_meta: std::collections::HashMap<String, FileMeta>,
+    pub alias_reexports: std::collections::HashMap<String, Vec<AliasSite>>,
+    pub wildcard_reexports: std::collections::HashMap<String, Vec<WildcardSite>>,
 }
 
 impl Index {
@@ -229,6 +256,8 @@ fn index_imports(
         let mut alias: Option<String> = None;
         let mut group_node: Option<tree_sitter::Node<'_>> = None;
         let mut import_node: Option<tree_sitter::Node<'_>> = None;
+        let mut is_reexport_alias = false;
+        let mut is_reexport_wildcard = false;
         for cap in m.captures {
             let cname = names[cap.index as usize];
             let text = cap.node.utf8_text(bytes).unwrap_or("").to_string();
@@ -238,11 +267,70 @@ fn index_imports(
                 "alias" => alias = Some(text),
                 "group" => group_node = Some(cap.node),
                 "import" => import_node = Some(cap.node),
+                "reexport_alias" => {
+                    is_reexport_alias = true;
+                    import_node = Some(cap.node);
+                }
+                "reexport_wildcard" => {
+                    is_reexport_wildcard = true;
+                    import_node = Some(cap.node);
+                }
                 _ => {}
             }
         }
         let line = import_node.map(|n| n.start_position().row + 1).unwrap_or(0);
         let module_path = path_text.unwrap_or_default();
+
+        // If this is a plain @import match (not reexport_alias/reexport_wildcard) but the
+        // use_declaration node has a `pub` visibility_modifier, skip it — the separate
+        // @reexport_alias or @reexport_wildcard match will handle it.
+        if !is_reexport_alias && !is_reexport_wildcard {
+            if let Some(node) = import_node {
+                let mut cur = node.walk();
+                let is_pub = node.children(&mut cur).any(|c| c.kind() == "visibility_modifier");
+                if is_pub {
+                    continue;
+                }
+            }
+        }
+
+        // Re-export patterns fire when `pub` is present — route them to their own tables.
+        if is_reexport_alias {
+            if let Some(a) = alias {
+                let original = module_path
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&module_path)
+                    .to_string();
+                idx.alias_reexports
+                    .entry(a.clone())
+                    .or_default()
+                    .push(AliasSite {
+                        file: rel.to_string(),
+                        line,
+                        alias: a,
+                        original,
+                        module_path,
+                    });
+            }
+            continue;
+        }
+        if is_reexport_wildcard {
+            let key = module_path
+                .rsplit("::")
+                .next()
+                .unwrap_or(&module_path)
+                .to_string();
+            idx.wildcard_reexports
+                .entry(key)
+                .or_default()
+                .push(WildcardSite {
+                    file: rel.to_string(),
+                    line,
+                    module_path,
+                });
+            continue;
+        }
 
         match (single_name, alias, group_node) {
             (Some(n), _, _) => {
