@@ -52,6 +52,52 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
         }
     }
 
+    // Wildcard re-exports: surface every wildcard whose target module defines
+    // a symbol named OLD. We use a lossy match (file stem == module path's
+    // last segment) — same heuristic the resolver uses for wildcard imports.
+    let defines_old: std::collections::HashSet<String> = index
+        .definitions
+        .iter()
+        .filter(|d| d.name == args.old)
+        .map(|d| d.file.clone())
+        .collect();
+
+    for sites in index.wildcard_reexports.values() {
+        for site in sites {
+            // Cheap match: the module path's tail segment appears in some
+            // definition-file's path. e.g. module_path "crate::inner" tail
+            // "inner" matches "src/inner.rs" in `defines_old`.
+            let tail = site.module_path.rsplit("::").next().unwrap_or(&site.module_path);
+            let related = defines_old.iter().any(|f| {
+                let stem = std::path::Path::new(f)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                stem == tail
+            });
+            if !related { continue; }
+
+            let already = skipped.iter().any(|s|
+                s.file == site.file && s.line == site.line && s.skip_reason == "wildcard-reexport"
+            );
+            if already { continue; }
+
+            skipped.push(SkippedSite {
+                file: site.file.clone(),
+                line: site.line,
+                col: 0,
+                start_byte: 0,
+                end_byte: 0,
+                name: args.old.clone(),
+                confidence: "medium",
+                reason: "import-resolved",
+                skip_reason: "wildcard-reexport",
+                via_alias: None,
+                via_module: Some(site.module_path.clone()),
+            });
+        }
+    }
+
     // High/Medium → queued for edit, minus any collision with an alias site.
     let alias_keys: std::collections::HashSet<(String, usize)> = index
         .alias_reexports

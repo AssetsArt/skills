@@ -177,3 +177,33 @@ fn rename_alias_reexport_skipped_with_via_alias() {
         Some(other) => panic!("via_module must not appear on re-export-alias entries: {other:?}"),
     }
 }
+
+#[test]
+fn rename_wildcard_reexport_skipped_with_via_module() {
+    let tmp = copy_fixture("wildcard_reexport");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+
+    let skipped = data["skipped"].as_array().expect("skipped array");
+    let wilds: Vec<&serde_json::Value> = skipped.iter()
+        .filter(|s| s["skip_reason"] == "wildcard-reexport")
+        .collect();
+    assert_eq!(wilds.len(), 1, "expected one wildcard skip; got {skipped:?}");
+
+    let w = wilds[0];
+    assert!(w["file"].as_str().unwrap().ends_with("lib.rs"));
+    assert!(w["via_module"].as_str().unwrap().contains("inner"),
+        "via_module should reference inner module; got {:?}", w["via_module"]);
+    match w.get("via_alias") {
+        None => {},
+        Some(v) if v.is_null() => {},
+        Some(other) => panic!("via_alias must not appear on wildcard-reexport entries: {other:?}"),
+    }
+}
