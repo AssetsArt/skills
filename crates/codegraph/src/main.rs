@@ -3,7 +3,6 @@ mod commands;
 mod index;
 mod output;
 mod resolve;
-mod walk;
 
 use clap::Parser;
 use cli::{Cli, Command};
