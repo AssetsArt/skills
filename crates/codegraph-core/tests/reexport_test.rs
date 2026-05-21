@@ -45,3 +45,27 @@ fn rust_non_pub_use_is_not_a_reexport() {
         "Untouched is a pub use without alias — should not be in alias_reexports",
     );
 }
+
+#[test]
+fn rust_direct_reexport_stays_in_imports() {
+    // `pub use inner::Untouched;` is a direct re-export (no alias, no glob).
+    // Per spec ("Direct re-exports are treated like any other reference"), it
+    // MUST remain in the imports table so the resolver can trace references
+    // through it. The duplicate-prevention rule introduced in Task 13 must NOT
+    // drop this entry.
+    let index = build_index(&fixture("reexport_rust")).unwrap();
+    let found = index
+        .imports
+        .iter()
+        .any(|imp| imp.local_name == "Untouched" || imp.imported_name == "Untouched");
+    assert!(
+        found,
+        "pub use inner::Untouched; (direct re-export, no alias) must be recorded in imports. \
+         Got imports: {:?}",
+        index
+            .imports
+            .iter()
+            .map(|i| format!("{}::{}", i.module_path, i.local_name))
+            .collect::<Vec<_>>()
+    );
+}

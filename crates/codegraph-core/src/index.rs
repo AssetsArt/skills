@@ -249,6 +249,28 @@ fn index_imports(
     let query = Query::new(&ts, query_src).context("compile imports query")?;
     let names = query.capture_names();
     let bytes = source.as_bytes();
+
+    // First pass: collect the byte ranges of every use_declaration node that was
+    // matched by a reexport-specific pattern (@reexport_alias or @reexport_wildcard).
+    // We use this in the second pass to skip the plain @import match for those exact
+    // nodes, preventing double-recording.  Nodes matched ONLY by @import (e.g. plain
+    // `pub use foo::Bar;` with no alias and no glob) are intentionally NOT in this set
+    // and must still be recorded in the imports table per spec.
+    let mut reexport_node_ranges: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+    {
+        let mut cursor = QueryCursor::new();
+        for m in cursor.matches(&query, tree.root_node(), bytes) {
+            for cap in m.captures {
+                let cname = names[cap.index as usize];
+                if cname == "reexport_alias" || cname == "reexport_wildcard" {
+                    reexport_node_ranges
+                        .insert((cap.node.start_byte(), cap.node.end_byte()));
+                }
+            }
+        }
+    }
+
     let mut cursor = QueryCursor::new();
     for m in cursor.matches(&query, tree.root_node(), bytes) {
         let mut path_text: Option<String> = None;
@@ -281,14 +303,14 @@ fn index_imports(
         let line = import_node.map(|n| n.start_position().row + 1).unwrap_or(0);
         let module_path = path_text.unwrap_or_default();
 
-        // If this is a plain @import match (not reexport_alias/reexport_wildcard) but the
-        // use_declaration node has a `pub` visibility_modifier, skip it — the separate
-        // @reexport_alias or @reexport_wildcard match will handle it.
+        // If this is a plain @import match for a use_declaration that was ALSO matched by
+        // a reexport-specific pattern, skip it — the reexport branch below will handle it.
+        // Crucially, plain `pub use foo::Bar;` (no alias, no glob) only matches @import,
+        // so its byte range is NOT in reexport_node_ranges and it passes through correctly.
         if !is_reexport_alias && !is_reexport_wildcard {
             if let Some(node) = import_node {
-                let mut cur = node.walk();
-                let is_pub = node.children(&mut cur).any(|c| c.kind() == "visibility_modifier");
-                if is_pub {
+                let range = (node.start_byte(), node.end_byte());
+                if reexport_node_ranges.contains(&range) {
                     continue;
                 }
             }
