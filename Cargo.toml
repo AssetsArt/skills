@@ -20,6 +20,9 @@ ignore = "0.4"
 sha2 = "0.10"
 hex = "0.4"
 thiserror = "1"
+ast-grep-core     = "=0.38.7"
+ast-grep-config   = "=0.38.7"
+ast-grep-language = "=0.38.7"
 
 [profile.release]
 lto = "thin"
