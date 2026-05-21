@@ -92,3 +92,34 @@ fn rust_imports_are_flattened() {
         .iter()
         .any(|h| h["kind"] == "definition"));
 }
+
+#[test]
+fn rust_call_expressions_become_references() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::write(
+        src.join("lib.rs"),
+        "pub fn alpha() {}\npub fn beta() { alpha(); }\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "alpha", "--json", "--path"])
+        .arg(tmp.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let kinds: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"definition"), "kinds: {:?}", kinds);
+    assert!(kinds.contains(&"call"), "kinds: {:?}", kinds);
+}

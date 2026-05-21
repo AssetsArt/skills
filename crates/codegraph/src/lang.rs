@@ -10,7 +10,6 @@ pub enum Language {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Refs wired in Task 8
 pub enum QueryKind {
     Defs,
     Imports,
@@ -55,6 +54,7 @@ impl Language {
         match (self, kind) {
             (Language::Rust, QueryKind::Defs) => Some(include_str!("queries/rust_defs.scm")),
             (Language::Rust, QueryKind::Imports) => Some(include_str!("queries/rust_imports.scm")),
+            (Language::Rust, QueryKind::Refs) => Some(include_str!("queries/rust_refs.scm")),
             _ => None,
         }
     }

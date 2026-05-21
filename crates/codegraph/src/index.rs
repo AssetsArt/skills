@@ -47,7 +47,6 @@ pub struct Import {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-#[allow(dead_code)] // variants wired in Tasks 6/7
 pub enum RefKind {
     Call,
     Reference,
@@ -70,7 +69,6 @@ pub struct Reference {
 pub struct Index {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
-    #[allow(dead_code)] // wired in Task 7
     pub references: Vec<Reference>,
 }
 
@@ -134,6 +132,11 @@ pub fn build_index(root: &Path) -> Result<Index> {
             // file rather than abort the whole index.
             if let Err(e) = index_imports(&mut idx, &source, &rel, f.language, q) {
                 eprintln!("codegraph: imports query skipped for {rel}: {e}");
+            }
+        }
+        if let Some(q) = f.language.query_source(QueryKind::Refs) {
+            if let Err(e) = index_refs(&mut idx, &source, &rel, f.language, q) {
+                eprintln!("codegraph: refs query skipped for {rel}: {e}");
             }
         }
     }
@@ -306,6 +309,81 @@ fn index_imports(
         }
     }
     Ok(())
+}
+
+impl RefKind {
+    fn from_capture_suffix(s: &str) -> Option<Self> {
+        match s.strip_prefix("ref.")? {
+            "call" => Some(RefKind::Call),
+            "reference" => Some(RefKind::Reference),
+            _ => None,
+        }
+    }
+}
+
+fn index_refs(
+    idx: &mut Index,
+    source: &str,
+    rel: &str,
+    lang: Language,
+    query_src: &str,
+) -> Result<()> {
+    let ts = lang.ts_language();
+    let mut parser = Parser::new();
+    parser.set_language(&ts)?;
+    let tree = parser.parse(source, None).context("parse")?;
+    let query = Query::new(&ts, query_src).context("compile refs query")?;
+    let names = query.capture_names();
+    let bytes = source.as_bytes();
+    let mut cursor = QueryCursor::new();
+
+    // Dedupe key: (byte_offset, name). Calls and Reference captures often overlap at the same byte.
+    let mut seen: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
+
+    for m in cursor.matches(&query, tree.root_node(), bytes) {
+        let mut name_node: Option<tree_sitter::Node<'_>> = None;
+        let mut ref_kind: Option<RefKind> = None;
+        for cap in m.captures {
+            let cname = names[cap.index as usize];
+            if cname == "name" {
+                name_node = Some(cap.node);
+            } else if let Some(k) = RefKind::from_capture_suffix(cname) {
+                ref_kind = Some(k);
+            }
+        }
+        let (Some(node), Some(kind)) = (name_node, ref_kind) else {
+            continue;
+        };
+        let name = node.utf8_text(bytes).unwrap_or("").to_string();
+        let byte_offset = node.start_byte();
+        if !seen.insert((byte_offset, name.clone())) {
+            // Same site already recorded — keep the first (Call wins over Reference because the query lists calls first).
+            continue;
+        }
+        let line = node.start_position().row + 1;
+        let column = node.start_position().column + 1;
+        let context = line_at(source, line);
+        idx.references.push(Reference {
+            file: rel.to_string(),
+            name,
+            kind,
+            line,
+            column,
+            byte_offset,
+            context,
+        });
+    }
+    Ok(())
+}
+
+fn line_at(source: &str, line: usize) -> String {
+    let raw = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
+    let trimmed = raw.trim();
+    if trimmed.chars().count() > 200 {
+        trimmed.chars().take(200).collect::<String>() + "…"
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn is_exported(node: tree_sitter::Node<'_>, bytes: &[u8], lang: Language) -> bool {
