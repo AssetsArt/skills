@@ -64,6 +64,15 @@ impl Language {
             (Language::TypeScript | Language::Tsx, QueryKind::Refs) => {
                 Some(include_str!("queries/typescript_refs.scm"))
             }
+            (Language::JavaScript, QueryKind::Defs) => {
+                Some(include_str!("queries/javascript_defs.scm"))
+            }
+            (Language::JavaScript, QueryKind::Imports) => {
+                Some(include_str!("queries/javascript_imports.scm"))
+            }
+            (Language::JavaScript, QueryKind::Refs) => {
+                Some(include_str!("queries/javascript_refs.scm"))
+            }
             _ => None,
         }
     }

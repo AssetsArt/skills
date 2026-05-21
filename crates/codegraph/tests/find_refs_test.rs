@@ -95,3 +95,29 @@ fn ts_cross_file_import_is_high_confidence() {
     assert_eq!(cross["confidence"], "high");
     assert_eq!(cross["reason"], "import-resolved");
 }
+
+fn js_fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi_lang/js_app")
+}
+
+#[test]
+fn js_cross_file_import_resolves() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "add", "--json", "--path"])
+        .arg(js_fixture())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let call = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["file"].as_str().unwrap().ends_with("index.js") && h["kind"] == "call")
+        .expect("index.js call to add");
+    assert_eq!(call["confidence"], "high");
+}
