@@ -9,6 +9,10 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[lib]
+name = "astedit"
+path = "src/lib.rs"
+
 [[bin]]
 name = "astedit"
 path = "src/main.rs"

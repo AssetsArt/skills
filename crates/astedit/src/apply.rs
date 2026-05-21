@@ -13,7 +13,6 @@ use crate::error::AstEditError;
 ///
 /// Returns `WriteFailed` on any IO error, with `os_code` populated from
 /// `io::Error::raw_os_error()`.
-#[allow(dead_code)]
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), AstEditError> {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     let file_name = target
@@ -56,7 +55,6 @@ pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), AstEditError> {
 /// `index_hash` is `None` when the index didn't hash the file eagerly
 /// (it never does in PR 1's `build_index`). When `None` AND lengths
 /// differ, drift is assumed — there's no cheap way to confirm.
-#[allow(dead_code)]
 pub fn check_drift(
     target: &Path,
     rel_path: &str,
@@ -93,7 +91,6 @@ pub fn check_drift(
 
 /// Stat `target` and return its current length. Used by the race-window
 /// guard right before a write — compared against the length read at step 5a.
-#[allow(dead_code)]
 pub fn current_len(target: &Path, rel_path: &str) -> Result<u64, AstEditError> {
     fs::metadata(target)
         .map(|m| m.len())

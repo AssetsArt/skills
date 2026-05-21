@@ -1,12 +1,6 @@
-mod apply;
-mod cli;
-mod commands;
-mod error;
-mod output;
-mod serialize;
-
+use astedit::cli::{Cli, Command};
+use astedit::commands;
 use clap::Parser;
-use cli::{Cli, Command};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();

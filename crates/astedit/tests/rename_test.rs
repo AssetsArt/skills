@@ -302,3 +302,30 @@ fn rename_apply_writes_changes_to_disk() {
     let edit_count = entry["edits"].as_array().unwrap().len() as i64;
     assert_eq!(bytes_changed, 3 * edit_count, "bytes_changed should be 3 per edit");
 }
+
+#[test]
+fn drift_between_index_and_apply_emits_hash_mismatch() {
+    let tmp = copy_fixture("apply_write");
+
+    // Build an index against the fresh fixture.
+    let index = codegraph_core::index::build_index(tmp.path()).unwrap();
+    // file_meta keys are repo-relative, forward-slash-normalized.
+    let (rel, meta) = index
+        .file_meta
+        .iter()
+        .find(|(k, _)| k.ends_with("main.rs"))
+        .expect("main.rs in file_meta");
+    let original_len = meta.len;
+
+    // Mutate the file so its length differs from the snapshot.
+    let target = tmp.path().join("main.rs");
+    let mut content = std::fs::read_to_string(&target).unwrap();
+    content.push_str("\n// drift bait\n");
+    std::fs::write(&target, &content).unwrap();
+    assert_ne!(content.len() as u64, original_len);
+
+    // The drift checker now sees length mismatch + no recorded hash → error.
+    let err = astedit::apply::check_drift(&target, rel, meta, None)
+        .expect_err("expected hash-mismatch");
+    assert_eq!(err.kind(), "hash-mismatch");
+}
