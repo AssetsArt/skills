@@ -13,3 +13,5 @@ pub mod walk;
 pub mod resolve;
 
 pub mod index;
+
+pub mod hash;
