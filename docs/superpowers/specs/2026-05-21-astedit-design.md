@@ -26,8 +26,6 @@ agent contract that powers `codemap` and `codegraph` extends to writes.
 - Type-aware semantic rename — `rust-analyzer` / `tsserver` territory.
 - Macro expansion — `println!` is treated as a reference to `println`, body
   not walked.
-- Re-export following — `pub use foo::Bar` is rewritten at the re-export
-  point but downstream callers are matched the usual way.
 - Cross-language semantic linking — Rust `User` and TypeScript `User` are not
   treated as the same identifier.
 - Multi-pass rewrites — one invocation, one pass. No fixpoint iteration.
@@ -36,6 +34,28 @@ agent contract that powers `codemap` and `codegraph` extends to writes.
   `codegraph`.
 - Refactor primitives beyond rename / structural rewrite (extract function,
   inline, change-signature). Out of scope for MVP.
+
+### Re-exports: limited support, not a non-goal
+
+Rust `pub use foo::Bar` (direct re-export) is treated like any other
+reference: the resolver sees the re-export site and `rename Bar Baz` will
+rewrite it. The downstream-caller side then matches via the normal
+import-resolution rules and is also rewritten.
+
+**Alias re-exports are the failure case** — `pub use foo::Bar as Baz`
+introduces a new name `Baz` whose definition the resolver does not know.
+PR 1's index build detects alias re-exports during the import-indexing
+pass and records them in a new `Index.alias_reexports` table. At rename
+time, if `<OLD>` is the target of an alias re-export anywhere in the
+project, `astedit` surfaces every such site in `skipped` with
+`skip_reason: "re-export-alias"` and a `via_alias: "Baz"` field, so the
+agent knows to either re-invoke `astedit rename Baz NewBaz` separately or
+manually inspect.
+
+Same treatment for TypeScript `export { Bar as Baz } from "./foo"` and
+Python `from foo import Bar as Baz`. Detecting alias re-exports is a
+straightforward extension to the existing `<lang>_imports.scm` queries
+and lives in PR 1 alongside the core extract.
 
 ## Engine choice: `ast-grep` crate
 
@@ -73,12 +93,22 @@ crates/
 ignore-aware walker. No `[[bin]]` section. Inherits workspace metadata.
 
 **One additive change to `Index` in PR 1**: alongside the existing
-definition / import / reference tables, store a `file_hashes: HashMap<PathBuf,
-[u8; 32]>` populated during `build_index` (SHA-256 of the file bytes the
-parser saw). `codegraph`'s existing subcommands ignore the new field; it
-exists purely so `astedit` can validate at apply time that the file on disk
-still matches what the resolver was reasoning about. This is the only change
-to `Index` in PR 1 — everything else is a pure move.
+definition / import / reference tables, store
+`file_meta: HashMap<PathBuf, FileMeta>` where
+`FileMeta { len: u64, mtime: SystemTime }`. Cheap to populate during
+`build_index` (already `stat`-ing files). SHA-256 is **not** stored eagerly
+— `codegraph`'s read-only subcommands don't need it, and hashing every
+parsed file on each invocation would tax large repos.
+
+Instead, expose `codegraph_core::compute_file_hash(path: &Path) -> io::Result<[u8; 32]>`
+as a free function. `astedit` calls it on demand for the files it is about
+to touch and compares against a fresh hash at apply time. The fast path
+(rename a few hits) hashes only a few files; the slow path (project-wide
+rewrite) hashes all touched files but that cost is unavoidable for safety.
+
+`file_meta` lets `astedit` do a cheap pre-flight check (mtime+len drift since
+index build) before paying the SHA-256 cost. This is the only change to
+`Index` in PR 1 — everything else is a pure move.
 
 `astedit/Cargo.toml` (concrete versions pinned in the implementation plan;
 the shape is):
@@ -104,17 +134,26 @@ intentionally leaves them open since `ast-grep` ships frequently.
 ## CLI surface
 
 ```
-astedit rename <OLD> <NEW>             [--path DIR] [--dry-run] [--json]
+astedit rename <OLD> <NEW>             [--path DIR] [--apply] [--json]
                                        [--lang LANG] [--anchor FILE:LINE]
-astedit rewrite --pattern P --rewrite R [--path DIR] [--dry-run] [--json]
-                                        [--lang LANG]
+                                       [--max-changes N]
+astedit rewrite --pattern P --rewrite R [--path DIR] [--apply] [--json]
+                                        [--lang LANG] [--max-changes N]
 ```
 
 Defaults:
 
 - `--path .`
-- **Apply by default** — files are written. `--dry-run` opts out and prints a
-  unified diff only.
+- **Dry-run by default** — files are NOT written. `--apply` opts in. Rationale:
+  agents chain tool calls without inspecting diffs between them. A bad
+  pattern that writes 40 files before the agent looks is worse than the
+  extra round-trip of a preview→apply cycle. Matches `codemod` / `comby` /
+  `jscodeshift -d` convention. Hash-checking at apply time does not protect
+  against the agent's own previous write.
+- `--max-changes N` is a circuit breaker (default `200`). If the preview
+  would touch more than `N` files, `--apply` refuses and prints the file
+  count. Override explicitly with a larger `--max-changes`. Dry-run is
+  unaffected.
 - Human-readable output by default (unified diff per file + summary).
   `--json` swaps to the `{schema_version: 1, data: …}` envelope.
 - `--lang` is optional. Without it the walker scans every supported extension
@@ -144,17 +183,33 @@ Defaults:
      High | Medium → queue for edit
      Low           → skipped list (reported, not written)
 5. Group queued edits by file. Per file:
-     a. Re-read file, compare SHA-256 with the contents that fed the index.
-        Mismatch → push entry to `errors`, skip file.
+     a. Pre-flight: `stat` the file, compare `(len, mtime)` against
+        `index.file_meta[path]`. Cheap drift detector. Mismatch
+        → SHA-256 the file and compare against
+        `codegraph_core::compute_file_hash` invoked at index time; if
+        still mismatched, push `errors{kind: "hash-mismatch"}` and skip
+        the file.
      b. Parse with ast-grep, look up identifier nodes that match
         (line, col) from each reference.
      c. If the node kind at (line, col) is not an identifier matching
-        <OLD>, push to `errors`, skip that edit (others in the file can
-        still apply).
+        <OLD>, push `errors{kind: "node-kind-mismatch"}` and skip that
+        edit (others in the file can still apply).
      d. Apply byte-level rewrites in reverse order of position.
-     e. Write atomically: temp file in the same directory + rename(2).
+     e. (only when `--apply`) Race-window guard: just before the write,
+        re-`stat` the file and compare against the `(len, mtime, ino)`
+        observed in step 5a. Mismatch ⇒ another process touched the
+        file between read and write — push `errors{kind:
+        "concurrent-write"}` and skip.
+     f. Atomic write: temp file in the same directory + `rename(2)`.
+        On filesystem errors (read-only mount, perms) push
+        `errors{kind: "write-failed", os_error: ...}` and continue with
+        other files.
 6. Emit envelope.
 ```
+
+Steps 5b–5d run in dry-run too; only 5e–5f are gated on `--apply`. Dry-run
+output therefore reflects what `--apply` *would* do, modulo step 5e's
+race-window check which can only fire when racing a real write.
 
 The hash check in step 5a is the apply-time safety belt: if a file changed
 between `build_index` and `apply`, the resolver's byte positions may no
@@ -167,15 +222,22 @@ longer be valid, so we refuse to touch that file.
 2. If --lang LANG → filter to extensions of LANG.
    Otherwise → per file, derive lang from extension, skip files whose lang
    doesn't compile the pattern.
-3. Per file:
+3. Per file (apply steps 5e/5f from rename only when --apply):
      a. Compile (pattern, rewrite) for the file's language via
-        ast-grep-config.
-     b. Re-read file, hash check (same as rename step 5a).
+        ast-grep-config. Compilation failure on first selected file ⇒
+        exit non-zero with `error_kind: "pattern-compile"`.
+     b. Read file. Skip drift check (no prior index — file content read
+        here IS the source of truth).
      c. ast-grep Matcher → list of matches.
      d. ast-grep Rewriter → byte edits in reverse order.
-     e. Atomic write.
+     e. Race-window guard before write (same as rename 5e).
+     f. Atomic write (same as rename 5f).
 4. Emit envelope.
 ```
+
+`rewrite` does not build a `codegraph_core::Index`; it only needs the walker
+and language registry. Faster than `rename` for large repos because the
+resolver step is skipped.
 
 Structural matches don't carry `confidence` / `reason` — they are AST-shape
 exact, so every match is treated as `high`.
@@ -190,16 +252,16 @@ Always wrapped in `{"schema_version": 1, "data": …}`. `data` is an object
   "schema_version": 1,
   "data": {
     "subcommand": "rename",
-    "dry_run": false,
+    "dry_run": true,
     "applied": [
       {
         "file": "src/lib.rs",
+        "bytes_changed": 28,
         "edits": [
           {
-            "line": 42,
-            "col": 12,
-            "old": "User",
-            "new": "Account",
+            "line": 42, "col": 12,
+            "start_byte": 1023, "end_byte": 1027,
+            "old": "User", "new": "Account",
             "confidence": "high",
             "reason": "same-file-scope"
           }
@@ -209,8 +271,8 @@ Always wrapped in `{"schema_version": 1, "data": …}`. `data` is an object
     "skipped": [
       {
         "file": "tests/util.rs",
-        "line": 7,
-        "col": 4,
+        "line": 7, "col": 4,
+        "start_byte": 142, "end_byte": 146,
         "name": "User",
         "confidence": "low",
         "reason": "name-only",
@@ -220,62 +282,138 @@ Always wrapped in `{"schema_version": 1, "data": …}`. `data` is an object
     "errors": [
       {
         "file": "src/broken.rs",
-        "error": "parse error at line 12"
+        "error_kind": "parse-error",
+        "message": "expected `;` at line 12"
       }
     ]
   }
 }
 ```
 
-Notes:
+### Field reference
 
-- `confidence` / `reason` fields are present only for `rename`. `rewrite`
-  edits omit them.
-- `dry_run: true` ⇒ `applied` is populated with would-be edits but files are
-  not touched.
-- `skipped` is the "look here too" lane — never causes a non-zero exit, but
-  the agent should treat it as candidate work.
-- `errors` is non-fatal as long as at least one file applied successfully
-  (sed-like behaviour). Exit non-zero only when **every** file failed or
-  when the invocation itself was invalid (rename without anchor on a
-  multi-def symbol, parse failure on the pattern for `rewrite`).
+- **`subcommand`** — `"rename"` or `"rewrite"`.
+- **`dry_run`** — `true` unless `--apply` was passed.
+- **`applied[].file`** — repo-relative path.
+- **`applied[].bytes_changed`** — sum of `(new.len() - old.len())` across
+  edits in this file (signed). Useful for change-budget reasoning.
+- **`applied[].edits[].line` / `.col`** — 1-based, human-friendly.
+- **`applied[].edits[].start_byte` / `.end_byte`** — 0-based half-open byte
+  range of the *original* text being replaced. Authoritative for tooling.
+- **`applied[].edits[].confidence` / `.reason`** — `rename` only, omitted
+  for `rewrite` (every match is AST-shape exact ⇒ implicit `high`).
+- **`skipped[]`** — same shape as an edit plus `skip_reason`. Known
+  `skip_reason` values: `"low-confidence"`, `"re-export-alias"`,
+  `"max-changes-exceeded"`.
+- **`errors[].error_kind`** — closed enum so agents can branch without
+  regex-parsing prose. Known kinds:
+  - `"parse-error"` — tree-sitter couldn't parse the file
+  - `"hash-mismatch"` — file changed between index build and apply
+  - `"concurrent-write"` — race window between pre-flight and write
+  - `"node-kind-mismatch"` — node at (line,col) wasn't the identifier we
+    expected (defensive — shouldn't normally happen)
+  - `"write-failed"` — filesystem error during atomic rename (includes
+    `os_error` field)
+  - `"pattern-compile"` — `rewrite` only; pattern failed to compile
+
+### Multi-def disambiguation (rename exit non-zero)
+
+When `rename` is invoked on a symbol with multiple definitions and no
+`--anchor`, the envelope wraps a `candidates` array instead of
+`applied`/`skipped`:
+
+```json
+{
+  "schema_version": 1,
+  "data": {
+    "subcommand": "rename",
+    "needs_anchor": true,
+    "candidates": [
+      { "file": "src/user.rs",    "line": 12, "kind": "struct" },
+      { "file": "src/account.rs", "line":  8, "kind": "fn"     }
+    ]
+  }
+}
+```
+
+Agent uses one of those `file:line` values for `--anchor` on the retry.
+
+### Exit status — single source of truth
+
+- `0` when the invocation is valid, regardless of match count. Empty
+  `applied` is success, matching `codemap`/`codegraph` convention.
+- Non-zero only when:
+  - `rename` on multi-def symbol without `--anchor` (`needs_anchor: true`)
+  - `rewrite` pattern fails to compile in any selected language
+  - Every targeted file ended up in `errors` (no successful apply)
+  - `--apply` was requested but `--max-changes` would be exceeded
+
+`errors` entries are non-fatal as long as at least one file applied
+successfully (sed-like).
 
 ## Safety / apply model
 
-- **Apply by default.** Writes files in place. The user already trusts git
-  to track changes; we don't shadow that with `.bak` files (matches
-  `codegraph`/`codemap` convention of "trust the user, trust git").
-- **`--dry-run`** opts out of writes. Both human and JSON modes still emit
-  the full `applied` list — it just describes would-be edits.
-- **Atomic writes.** Temp file in the same directory, then `rename(2)`. No
-  partial writes if the process is killed mid-apply.
-- **Hash check.** Before applying edits to a file, re-read it and compare
-  SHA-256 against the bytes that fed the index. Mismatch ⇒ skip the file,
-  log an `errors` entry. Prevents corruption when the user edits a file
-  between two phases.
-- **No git tree check.** We don't refuse to run on a dirty tree. Agent + git
-  is the accountability layer; adding the check would only annoy normal
-  use.
+- **Dry-run by default.** No writes unless `--apply` is passed. Both human
+  and JSON modes always emit a full `applied` list describing would-be
+  edits, so the agent can inspect a structured preview before committing.
+  Architect's argument that won this: agents chain tool calls without
+  inspecting diffs between them; a runaway pattern that wrote 40 files
+  before the agent looked at anything would be worse than the extra
+  round-trip of preview→apply. `codegraph`/`codemap` are read-only so
+  their "trust git" stance doesn't transfer.
+- **`--apply` opts in to writes.** Combine with `--max-changes N` (default
+  200) as a circuit breaker — `--apply` refuses if the preview would
+  exceed `N` files and prints the count instead. Dry-run is unaffected
+  by `--max-changes`.
+- **Atomic per-file writes.** Temp file in the same directory, then
+  `rename(2)`. No partial writes if the process is killed. Per-file
+  atomicity means a fail on file 7 of 12 leaves files 1–6 written
+  (correct, matching `git apply` semantics). Each failure is reported in
+  `errors` so the agent can retry just the failing files.
+- **Two-layer drift detection.** (a) Pre-flight `(len, mtime)` check
+  against the snapshot `Index.file_meta` taken at `build_index` time —
+  cheap, catches most drift. (b) On suspected drift, fall back to
+  SHA-256 to disambiguate clock skew from real change. Mismatch ⇒
+  `error_kind: "hash-mismatch"`, skip the file.
+- **Race-window guard.** Between pre-flight (5a) and atomic write (5f),
+  re-`stat` the file just before the rename. If `(len, mtime, ino)` has
+  moved, emit `error_kind: "concurrent-write"` and skip. Closes the
+  TOCTOU window the architect flagged.
+- **No `.bak` files, no git tree check.** Agent + git remains the
+  accountability layer for the writes that `--apply` does perform.
+  `.bak` shadow files would just clutter the tree.
 
 ## Build / release plumbing
 
-Two changes in **PR 1** so that `codegraph-core` can ship as a library-only
-member without breaking the existing pipeline:
+**Invert the iteration**, in PR 1, for both the local build script and the
+release workflow: walk `skills/ny-*/` (the things we actually ship) instead
+of `crates/*/` (which now includes lib-only members). This keeps the
+existing invariant "skill_dir == 'ny-' + crate_name" load-bearing for
+things that produce binaries, while making lib-only crates structurally
+invisible to release plumbing.
 
-- `scripts/build-skills.sh` — guard the
-  `cp target/release/$name skills/ny-$name/scripts/$name` step on the
-  existence of `skills/ny-$name/SKILL.md`. Lib-only crates produce no binary
-  so there is nothing to copy. Skip silently.
-- `.github/workflows/release.yml` "Audit crate/skill pairs" step — currently
-  errors if any `crates/<name>` lacks a matching `skills/ny-<name>`.
-  Change: parse the crate's `Cargo.toml`, skip the audit when the crate has
-  no `[[bin]]` section. (Alternative considered: explicit allowlist file
-  `scripts/lib-only-crates.txt`. Rejected — `[[bin]]` is the ground truth;
-  an allowlist would drift.)
+Concrete changes:
+
+- `scripts/build-skills.sh` — replace the `for crate in crates/*/` loop
+  with `for skill in skills/ny-*/`, derive `name=${skill#skills/ny-}`,
+  build `cargo build -p "$name" --release`, then
+  `cp target/release/$name skills/ny-$name/scripts/$name`. lib-only
+  crates have no matching skill dir, so nothing iterates over them.
+- `.github/workflows/release.yml` — apply the same inversion to **both**
+  loops the architect flagged: the "Audit crate/skill pairs" step
+  (currently errors when a `crates/<name>` lacks `skills/ny-<name>`) and
+  the tarball-packaging step that runs
+  `tar -C "target/$triple/release" -czf … "$name"` per crate. After
+  inversion, both walk `skills/ny-*/` and the missing-binary failure mode
+  disappears because lib-only crates are not in the iteration set.
+
+(Alternative considered: keep the crates iteration and gate each step on
+`grep -q '^\[\[bin\]\]' "$c/Cargo.toml"`. Rejected — inverting the loop is
+structurally cleaner and removes a second source of truth.)
 
 The release matrix itself is per-target, not per-skill, so no further
-changes are needed. `codegraph-core` ships as a transitive dependency of the
-`codegraph` and `astedit` binaries.
+changes are needed. `codegraph-core` ships as a transitive dependency of
+the `codegraph` and `astedit` binaries.
 
 ## Testing strategy
 
@@ -311,28 +449,49 @@ TempDir` lives in `crates/astedit/tests/common/mod.rs`.
 adding `insta` to the workspace. Lower dep, less ceremony, and the spec
 already pins the schema.
 
-**PR 1 regression.** All 28 existing tests across `codemap` and `codegraph`
-must remain green without modification. Any forced test edit during the
-core extract is a signal that the extract has a behaviour change and should
-be revisited.
+**PR 1 regression.** All 31 existing tests (13 in `codemap`, 18 in
+`codegraph`) must remain green without modification. Any forced test edit
+during the core extract is a signal that the extract has a behaviour change
+and should be revisited.
 
 ## Rollout — three PRs
 
-1. **PR 1: extract `codegraph-core`.** Move the four source files and the
-   `queries/` tree, add `lib.rs`, swap `crate::*` imports in
-   `codegraph/src/commands/*.rs` to `codegraph_core::*`. Add the
-   `Index.file_hashes` field (SHA-256 per parsed file) — the only additive
-   change in this PR; existing `codegraph` subcommands ignore it. Teach
-   `build-skills.sh` and `release.yml` audit. **No observable behaviour
-   change.** Ship when the existing 28 tests pass unchanged.
+1. **PR 1: extract `codegraph-core`.** Move `index.rs`, `resolve.rs`,
+   `lang.rs`, `walk.rs`, and `queries/*.scm` into the new crate; add
+   `lib.rs`. Swap `crate::*` imports in `codegraph/src/commands/*.rs` to
+   `codegraph_core::*`. Additive changes (all in core):
+   - `Index.file_meta: HashMap<PathBuf, FileMeta { len, mtime }>` — cheap
+     drift snapshot, populated during the existing `stat` pass.
+   - `Index.alias_reexports: HashMap<String, Vec<AliasSite>>` — populated
+     from extended `<lang>_imports.scm` queries.
+   - `pub fn compute_file_hash(path: &Path) -> io::Result<[u8; 32]>` —
+     standalone helper, not eagerly invoked.
+
+   Invert the iteration in `scripts/build-skills.sh` and both loops in
+   `.github/workflows/release.yml` from `crates/*/` to `skills/ny-*/`.
+   **No observable behaviour change** for existing `codegraph` /
+   `codemap` invocations. Ship when all 31 existing tests pass unchanged
+   AND new unit tests for `compute_file_hash` + alias-reexport detection
+   pass.
 2. **PR 2: `astedit` MVP — rename only.** New `crates/astedit/` and
    `skills/ny-astedit/`, `rename` subcommand, full safety model
-   (atomic + hash check), JSON envelope. SKILL.md description follows the
-   `codemap`/`codegraph` "PREFER THIS over …" template so agents discover
-   it.
+   (dry-run default, atomic write, two-layer drift detection, race-window
+   guard, `--max-changes` circuit breaker), JSON envelope. Adds
+   `ast-grep-core`, `ast-grep-config`, `ast-grep-language` to
+   `[workspace.dependencies]`. SKILL.md description follows the
+   `codemap`/`codegraph` "PREFER THIS over …" template so agents
+   discover it.
+
+   **`ast-grep-*` deps are unused by `rename` directly** (rename does its
+   own byte splicing on identifier nodes). They're added in PR 2 anyway
+   because PR 3 follows immediately and splitting the dep addition
+   adds review churn. The architect flagged this as a Medium concern;
+   accepted as a deliberate trade-off. If PR 3 is delayed >2 weeks,
+   re-evaluate and cfg-gate.
 3. **PR 3: `astedit rewrite`.** Add `rewrite` subcommand to the existing
    binary. Pass-through `ast-grep` pattern syntax. Per-language ext
-   inference. New tests in `rewrite_test.rs`.
+   inference. New tests in `rewrite_test.rs`. No new top-level deps —
+   PR 2 already added the `ast-grep-*` family.
 
 ## Future work (not in MVP, listed for context)
 
