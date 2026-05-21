@@ -90,3 +90,27 @@ fn rename_cross_file_import_resolved() {
         assert_eq!(e["confidence"], "high", "got {e:?}");
     }
 }
+
+#[test]
+fn rename_glob_import_medium_confidence_applied() {
+    let tmp = copy_fixture("glob_import");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    let applied = data["applied"].as_array().expect("applied array");
+
+    let lib = applied.iter().find(|f| f["file"].as_str().unwrap().ends_with("lib.rs"))
+        .expect("lib.rs should be in applied");
+    let lib_edits = lib["edits"].as_array().unwrap();
+    assert!(!lib_edits.is_empty(), "expected at least one edit in lib.rs");
+    for e in lib_edits {
+        // Glob-only import → resolver assigns Medium.
+        assert_eq!(e["confidence"], "medium", "expected medium for glob import: {e:?}");
+    }
+}
