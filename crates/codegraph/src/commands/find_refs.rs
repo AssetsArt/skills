@@ -1,5 +1,5 @@
 use crate::cli::FindRefsArgs;
-use crate::index::{build_index, DefKind};
+use crate::index::build_index;
 use crate::output::print_json;
 use serde::Serialize;
 
@@ -44,7 +44,3 @@ pub fn run(args: FindRefsArgs) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-// Silence "unused" until we start reading non-`fn`/`struct` defs.
-#[allow(dead_code)]
-fn _kind_label(_: DefKind) {}
