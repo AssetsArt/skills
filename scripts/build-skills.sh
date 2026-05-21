@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Build every workspace crate that has a matching skills/<name>/ dir and
-# copy the release binary into skills/<name>/scripts/<name>.
+# Build every skill (skills/ny-<name>/) by compiling the crate of the same
+# name and copying the release binary into skills/ny-<name>/scripts/<name>.
+#
+# Iteration walks `skills/ny-*/`, NOT `crates/*/`. Lib-only crates (e.g.
+# codegraph-core) have no matching skill dir and are not iterated. The
+# CI release.yml runs a separate audit that fails if any crate with a
+# [[bin]] section lacks a skill dir.
 #
 # Run from the repo root:
 #   ./scripts/build-skills.sh
@@ -18,15 +23,18 @@ cd "$repo_root"
 
 cargo build --workspace --release --locked
 
-# Convention: each crate `<name>` exposes a skill at `skills/ny-<name>/`.
-# The binary inside `scripts/` keeps the crate's original name (no rename).
 built=0
-for crate in crates/*/; do
-  name="$(basename "$crate")"
-  skill_dir="skills/ny-$name"
-  [ -d "$skill_dir" ] || continue          # internal helper crate; no skill surface
+shopt -s nullglob
+for skill_dir in skills/ny-*/; do
+  skill_dir="${skill_dir%/}"               # strip trailing /
+  name="${skill_dir#skills/ny-}"           # ny-codemap -> codemap
+  binary="target/release/$name"
+  if [ ! -f "$binary" ]; then
+    echo "error: $binary missing; the crate may not declare [[bin]]" >&2
+    exit 1
+  fi
   mkdir -p "$skill_dir/scripts"
-  cp "target/release/$name" "$skill_dir/scripts/$name"
+  cp "$binary" "$skill_dir/scripts/$name"
   chmod +x "$skill_dir/scripts/$name"
   echo "built $skill_dir/scripts/$name"
   built=$((built + 1))

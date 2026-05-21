@@ -65,11 +65,49 @@ pub struct Reference {
     pub context: String,
 }
 
+/// Snapshot of stat-time metadata for one source file. Populated during
+/// `build_index`. Used by `astedit` for cheap drift detection between
+/// index build and apply.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct FileMeta {
+    pub len: u64,
+}
+
+/// One `pub use foo::Bar as Baz;` style alias re-export. Records both names
+/// so the rename pipeline can surface the site under `skip_reason:
+/// "re-export-alias"` with a `via_alias` field.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct AliasSite {
+    pub file: String,
+    pub line: usize,
+    pub alias: String,
+    pub original: String,
+    pub module_path: String,
+}
+
+/// One `pub use foo::*;` style wildcard re-export. The set of symbols that
+/// cross the boundary cannot be known without parsing the target module's
+/// exports, so the rename pipeline surfaces these under `skip_reason:
+/// "wildcard-reexport"` with a `via_module` field.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct WildcardSite {
+    pub file: String,
+    pub line: usize,
+    pub module_path: String,
+}
+
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct Index {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
     pub references: Vec<Reference>,
+    pub file_meta: std::collections::HashMap<String, FileMeta>,
+    pub alias_reexports: std::collections::HashMap<String, Vec<AliasSite>>,
+    pub wildcard_reexports: std::collections::HashMap<String, Vec<WildcardSite>>,
 }
 
 impl Index {
@@ -122,6 +160,12 @@ pub fn build_index(root: &Path) -> Result<Index> {
             .unwrap_or(&f.path)
             .to_string_lossy()
             .into_owned();
+        idx.file_meta.insert(
+            rel.clone(),
+            FileMeta {
+                len: source.len() as u64,
+            },
+        );
         if let Some(q) = f.language.query_source(QueryKind::Defs) {
             index_defs(&mut idx, &source, &rel, f.language, q)?;
         }
@@ -207,13 +251,45 @@ fn index_imports(
     let query = Query::new(&ts, query_src).context("compile imports query")?;
     let names = query.capture_names();
     let bytes = source.as_bytes();
+
+    // First pass: collect the byte ranges of every use_declaration node that was
+    // matched by a reexport-specific pattern (@reexport_alias or @reexport_wildcard).
+    // We use this in the second pass to skip the plain @import match for those exact
+    // nodes, preventing double-recording.  Nodes matched ONLY by @import (e.g. plain
+    // `pub use foo::Bar;` with no alias and no glob) are intentionally NOT in this set
+    // and must still be recorded in the imports table per spec.
+    let mut reexport_node_ranges: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+    {
+        let mut cursor = QueryCursor::new();
+        for m in cursor.matches(&query, tree.root_node(), bytes) {
+            for cap in m.captures {
+                let cname = names[cap.index as usize];
+                if cname == "reexport_alias" || cname == "reexport_wildcard" {
+                    reexport_node_ranges.insert((cap.node.start_byte(), cap.node.end_byte()));
+                }
+            }
+        }
+    }
+
+    // Whether this language uses quoted string nodes for module paths (TS/JS) or bare
+    // scoped-identifier paths (Rust). TS/JS `(string)` nodes include the surrounding
+    // quote characters in their text, so we strip them before storing.
+    let path_uses_quotes = matches!(
+        lang,
+        Language::TypeScript | Language::Tsx | Language::JavaScript
+    );
+
     let mut cursor = QueryCursor::new();
     for m in cursor.matches(&query, tree.root_node(), bytes) {
         let mut path_text: Option<String> = None;
         let mut single_name: Option<String> = None;
         let mut alias: Option<String> = None;
+        let mut original_name: Option<String> = None;
         let mut group_node: Option<tree_sitter::Node<'_>> = None;
         let mut import_node: Option<tree_sitter::Node<'_>> = None;
+        let mut is_reexport_alias = false;
+        let mut is_reexport_wildcard = false;
         for cap in m.captures {
             let cname = names[cap.index as usize];
             let text = cap.node.utf8_text(bytes).unwrap_or("").to_string();
@@ -221,13 +297,92 @@ fn index_imports(
                 "path" => path_text = Some(text),
                 "name" => single_name = Some(text),
                 "alias" => alias = Some(text),
+                "original" => original_name = Some(text),
                 "group" => group_node = Some(cap.node),
                 "import" => import_node = Some(cap.node),
+                "reexport_alias" => {
+                    is_reexport_alias = true;
+                    import_node = Some(cap.node);
+                }
+                "reexport_wildcard" => {
+                    is_reexport_wildcard = true;
+                    import_node = Some(cap.node);
+                }
                 _ => {}
             }
         }
         let line = import_node.map(|n| n.start_position().row + 1).unwrap_or(0);
-        let module_path = path_text.unwrap_or_default();
+        // Strip surrounding quote characters for TS/JS string nodes.
+        let module_path = {
+            let raw = path_text.unwrap_or_default();
+            if path_uses_quotes {
+                raw.trim_matches('"').trim_matches('\'').to_string()
+            } else {
+                raw
+            }
+        };
+
+        // If this is a plain @import match for a use_declaration that was ALSO matched by
+        // a reexport-specific pattern, skip it — the reexport branch below will handle it.
+        // Crucially, plain `pub use foo::Bar;` (no alias, no glob) only matches @import,
+        // so its byte range is NOT in reexport_node_ranges and it passes through correctly.
+        if !is_reexport_alias && !is_reexport_wildcard {
+            if let Some(node) = import_node {
+                let range = (node.start_byte(), node.end_byte());
+                if reexport_node_ranges.contains(&range) {
+                    continue;
+                }
+            }
+        }
+
+        // Re-export patterns fire when `pub` is present (Rust) or on export_statement
+        // (TS/JS) — route them to their own tables.
+        if is_reexport_alias {
+            if let Some(a) = alias {
+                // TS/JS: `original` comes from the explicit @original capture (the `name`
+                // field of export_specifier). Rust: derive from the last `::` segment of
+                // the module path since `use foo::Bar as Baz` encodes the original name
+                // as the final path component.
+                let original = if let Some(orig) = original_name {
+                    orig
+                } else {
+                    module_path
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(&module_path)
+                        .to_string()
+                };
+                idx.alias_reexports
+                    .entry(a.clone())
+                    .or_default()
+                    .push(AliasSite {
+                        file: rel.to_string(),
+                        line,
+                        alias: a,
+                        original,
+                        module_path,
+                    });
+            }
+            continue;
+        }
+        if is_reexport_wildcard {
+            // TS/JS paths are slash-separated (e.g. "./widgets"), Rust paths use `::`.
+            // Key on the last segment regardless of separator.
+            let key = module_path
+                .rsplit(['/', ':'])
+                .find(|s| !s.is_empty())
+                .unwrap_or(&module_path)
+                .to_string();
+            idx.wildcard_reexports
+                .entry(key)
+                .or_default()
+                .push(WildcardSite {
+                    file: rel.to_string(),
+                    line,
+                    module_path,
+                });
+            continue;
+        }
 
         match (single_name, alias, group_node) {
             (Some(n), _, _) => {

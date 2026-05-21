@@ -61,24 +61,51 @@ jobs:
         if: matrix.builder == 'cross'
         run: cargo install cross --git https://github.com/cross-rs/cross --tag ${{ env.CROSS_PINNED_TAG }} --locked
 
-      - name: Audit crate/skill pairs
+      - name: Audit skills exist
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          crates=(crates/*/)
-          for c in "${crates[@]}"; do
-            name=$(basename "$c")
-            if [ ! -d "skills/ny-$name" ]; then
-              echo "::error::crate $name has no matching skills/ny-$name dir"
+          skills=(skills/ny-*/)
+          if [ "${#skills[@]}" -eq 0 ]; then
+            echo "::error::no skill dirs found under skills/ -- nothing to package"
+            exit 1
+          fi
+          for s in "${skills[@]}"; do
+            s="${s%/}"
+            name="${s#skills/ny-}"
+            if [ ! -f "crates/$name/Cargo.toml" ]; then
+              echo "::error::skill $s has no matching crates/$name"
+              exit 1
+            fi
+            if [ ! -f "$s/SKILL.md" ]; then
+              echo "::error::skill $s missing SKILL.md"
               exit 1
             fi
           done
-          if [ "${#crates[@]}" -eq 0 ]; then
-            echo "::error::no crates found under crates/ -- nothing to package"
+          echo "packaging ${#skills[@]} skill(s) for ${{ matrix.slug }}"
+
+      - name: Audit binary crates have skill dirs
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          failed=0
+          for c in crates/*/; do
+            c="${c%/}"
+            name="${c#crates/}"
+            # Skip lib-only crates (no [[bin]] section in Cargo.toml).
+            if ! grep -q '^\[\[bin\]\]' "$c/Cargo.toml"; then
+              continue
+            fi
+            if [ ! -f "skills/ny-$name/SKILL.md" ]; then
+              echo "::error::binary crate $name has no matching skills/ny-$name/SKILL.md"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
             exit 1
           fi
-          echo "packaging ${#crates[@]} crate/skill pair(s) for ${{ matrix.slug }}"
 
       - name: Build (cargo)
         if: matrix.builder == 'cargo'
@@ -88,7 +115,7 @@ jobs:
         if: matrix.builder == 'cross'
         run: cross build --workspace --release --locked --target ${{ matrix.triple }}
 
-      - name: Package + checksum every crate/skill pair
+      - name: Package + checksum every skill
         shell: bash
         run: |
           set -euo pipefail
@@ -98,8 +125,10 @@ jobs:
           out="release-assets"
           mkdir -p "$out"
           if command -v sha256sum >/dev/null; then SHA=(sha256sum); else SHA=(shasum -a 256); fi
-          for crate in crates/*/; do
-            name=$(basename "$crate")
+          shopt -s nullglob
+          for skill_dir in skills/ny-*/; do
+            skill_dir="${skill_dir%/}"
+            name="${skill_dir#skills/ny-}"
             tar -C "target/$triple/release" -czf "$out/$name-$tag-$slug.tar.gz" "$name"
             ( cd "$out" && "${SHA[@]}" "$name-$tag-$slug.tar.gz" > "$name-$tag-$slug.sha256" )
             echo "packaged $out/$name-$tag-$slug.tar.gz"

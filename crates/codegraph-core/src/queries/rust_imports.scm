@@ -23,3 +23,16 @@
 (use_declaration
   argument: (use_wildcard
     (_) @path)) @import
+
+; pub use foo::Bar as Baz;   -- alias re-export
+(use_declaration
+  (visibility_modifier) @vis
+  argument: (use_as_clause
+    path: (_) @path
+    alias: (identifier) @alias)) @reexport_alias
+
+; pub use foo::*;            -- wildcard re-export
+(use_declaration
+  (visibility_modifier) @vis
+  argument: (use_wildcard
+    (_) @path)) @reexport_wildcard

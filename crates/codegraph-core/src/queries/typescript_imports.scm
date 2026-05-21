@@ -18,3 +18,16 @@
   (import_clause
     (namespace_import (identifier) @name))
   source: (string) @path) @import
+
+; export { Bar as Baz } from "./foo";    -- alias re-export
+(export_statement
+  (export_clause
+    (export_specifier
+      name: (identifier) @original
+      alias: (identifier) @alias))
+  source: (string) @path) @reexport_alias
+
+; export * from "./foo";                  -- wildcard re-export
+(export_statement
+  "*"
+  source: (string) @path) @reexport_wildcard

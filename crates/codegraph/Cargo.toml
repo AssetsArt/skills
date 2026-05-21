@@ -13,16 +13,11 @@ name = "codegraph"
 path = "src/main.rs"
 
 [dependencies]
+codegraph-core = { path = "../codegraph-core" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-ignore = { workspace = true }
-tree-sitter = "0.22"
-tree-sitter-rust = "0.21"
-tree-sitter-typescript = "0.21"
-tree-sitter-javascript = "0.21"
-tree-sitter-python = "0.21"
 
 [dev-dependencies]
 tempfile = "3"
