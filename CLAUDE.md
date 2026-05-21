@@ -57,6 +57,16 @@ The `crates/codemap` binary is the reference layout new skills should mirror:
 
 Integration tests under `crates/codemap/tests/` operate on `tests/fixtures/sample_project/`. When you add a new language or symbol kind, extend the fixture and add cases to the relevant `*_test.rs` rather than creating ad-hoc temp dirs.
 
+## Architecture notes for `codegraph`
+
+`crates/codegraph` extends the `codemap` template with semantic cross-references. Layout differences worth knowing before editing:
+
+- Three query files per language (`<lang>_defs.scm`, `<lang>_imports.scm`, `<lang>_refs.scm`) — not one. `Language::query_source` returns `Option<&'static str>` keyed on a `QueryKind` enum.
+- `src/index.rs` owns the three in-memory tables (`Definition`, `Import`, `Reference`) and the `build_index` builder. Every subcommand starts by calling `build_index(&path)`.
+- `src/resolve.rs` is the confidence/reason tagger. Cross-file matching is heuristic — see `module_matches` for the per-language path rules. When you add a new language, extend that function alongside the three `.scm` files.
+- Subcommands live in `src/commands/{find_refs,callers,callees,impact}.rs`. `callers`/`callees`/`impact` use BFS bounded by `HARD_CAP = 8`. `--depth` is clamped against that.
+- Output schema is the same `{schema_version: 1, data: [...]}` envelope; the entry shape adds `confidence` and `reason`. Documented in `skills/ny-codegraph/SKILL.md` — keep the two in sync.
+
 ## Adding a new skill (checklist beyond the README)
 
 The README covers the high-level steps. Things that will bite if missed:
