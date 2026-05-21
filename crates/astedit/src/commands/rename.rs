@@ -1,4 +1,4 @@
-use codegraph_core::index::build_index;
+use codegraph_core::index::{build_index, DefKind};
 use codegraph_core::resolve::{resolve_refs, Confidence, Resolved};
 
 use crate::cli::RenameArgs;
@@ -9,6 +9,44 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     let path = args.path.as_path();
     let index = build_index(path)?;
     let resolved = resolve_refs(&index, &args.old);
+
+    // Step 2: find defs by name. Resolver doesn't expose this — query the
+    // index directly.
+    let defs: Vec<&codegraph_core::index::Definition> = index
+        .definitions
+        .iter()
+        .filter(|d| d.name == args.old)
+        .collect();
+
+    // Count distinct files; same-file multiple defs (e.g. nested modules) are
+    // handled by the resolver — only cross-file ambiguity requires --anchor.
+    let def_files: std::collections::HashSet<&str> =
+        defs.iter().map(|d| d.file.as_str()).collect();
+
+    if def_files.len() > 1 && args.anchor.is_none() {
+        // Multi-def disambiguation: emit needs_anchor + candidates and exit non-zero.
+        let candidates: Vec<crate::serialize::Candidate> = defs
+            .iter()
+            .map(|d| crate::serialize::Candidate {
+                file: d.file.clone(),
+                line: d.line,
+                kind: def_kind_str(d.kind).to_string(),
+            })
+            .collect();
+        let data = RenameData {
+            subcommand: "rename",
+            dry_run: !args.apply,
+            needs_anchor: Some(true),
+            candidates: Some(candidates),
+            applied: None,
+            skipped: None,
+            errors: None,
+        };
+        if args.json {
+            print_json(data)?;
+        }
+        return Ok(2);
+    }
 
     let mut applied: Vec<AppliedFile> = Vec::new();
     let mut skipped: Vec<SkippedSite> = Vec::new();
@@ -173,4 +211,19 @@ fn build_edits(
         bytes_changed,
         edits,
     })
+}
+
+fn def_kind_str(k: DefKind) -> &'static str {
+    use codegraph_core::index::DefKind::*;
+    match k {
+        Fn => "fn",
+        Struct => "struct",
+        Enum => "enum",
+        Trait => "trait",
+        Class => "class",
+        Interface => "interface",
+        Type => "type",
+        Const => "const",
+        Method => "method",
+    }
 }

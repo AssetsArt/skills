@@ -207,3 +207,37 @@ fn rename_wildcard_reexport_skipped_with_via_module() {
         Some(other) => panic!("via_alias must not appear on wildcard-reexport entries: {other:?}"),
     }
 }
+
+#[test]
+fn rename_multi_def_without_anchor_needs_anchor_envelope() {
+    let tmp = copy_fixture("multi_def");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--json",
+    ]);
+
+    assert_ne!(code, 0, "multi-def without --anchor must exit non-zero");
+    assert_eq!(data["subcommand"], "rename");
+    assert_eq!(data["needs_anchor"], true);
+
+    let candidates = data["candidates"].as_array().expect("candidates array");
+    assert_eq!(candidates.len(), 2, "expected exactly two candidates: {candidates:?}");
+
+    let kinds: Vec<&str> = candidates.iter().map(|c| c["kind"].as_str().unwrap()).collect();
+    assert!(kinds.contains(&"struct"));
+    assert!(kinds.contains(&"fn"));
+
+    for c in candidates {
+        assert!(c["line"].as_u64().unwrap() >= 1);
+        let f = c["file"].as_str().unwrap();
+        assert!(f.ends_with("a.rs") || f.ends_with("b.rs"));
+    }
+
+    // No applied/skipped/errors on the needs_anchor path.
+    match data.get("applied") { None => {}, Some(v) if v.is_null() => {}, Some(other) => panic!("applied should be absent: {other:?}") }
+    match data.get("skipped") { None => {}, Some(v) if v.is_null() => {}, Some(other) => panic!("skipped should be absent: {other:?}") }
+    match data.get("errors")  { None => {}, Some(v) if v.is_null() => {}, Some(other) => panic!("errors should be absent: {other:?}") }
+}
