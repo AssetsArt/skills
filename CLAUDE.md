@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Codebase exploration: prefer the local skills over ad-hoc `grep`/`find`/`ls`
+
+This repo ships two CLI skills designed for exactly the queries an agent runs while orienting in a project. **Default to them** before reaching for `grep`/`rg`/`find`/`ls`/`tree`/`fd`. They return structured results (file + line + symbol kind + confidence), which is faster to reason about and cheaper to feed back into prompts than text matches.
+
+| Question | Use | Not |
+| --- | --- | --- |
+| "What's in this repo?" / "list source files" | `./scripts/codemap files --json` or `codemap tree` | `ls -R`, `find . -name '*.rs'`, `tree` |
+| "Where is `X` defined?" | `codemap find X --exact --json` | `grep -rn "fn X\|class X\|struct X"` |
+| "What top-level symbols does this file have?" | `codemap symbols src/foo.rs --json` | `grep -E "^(pub )?(fn|struct|class)"` |
+| "Where else is `X` used?" / "who calls Y?" | `codegraph find-refs X --json` / `codegraph callers Y --json` | `grep -rn X`, `rg X`, `find . \| xargs grep` |
+| "What does `Z` call?" | `codegraph callees Z --json` | reading file by file |
+| "What breaks if I change `W`?" | `codegraph impact W --json` | guessing, then grepping |
+
+When to bypass and reach for `grep`/`rg` anyway:
+- Searching for prose, comments, log lines, error messages, regex literals, config keys — anything that isn't a named code symbol.
+- Searching in a language the skills don't support (current set: Rust, TypeScript, TSX, JavaScript, Python).
+- Counting raw occurrences of a substring, not call/reference relationships.
+
+Both skills always accept `--json`; assert `result.schema_version === 1` and read `result.data`. The pre-built binaries live at `./skills/ny-codemap/scripts/codemap` and `./skills/ny-codegraph/scripts/codegraph` in this repo; from agent contexts elsewhere they install to `~/.claude/skills/ny-<name>/scripts/<name>`. If a binary is missing, run `./scripts/build-skills.sh` (local) or `./scripts/install.sh` (release tarball).
+
 ## Project shape
 
 A Cargo workspace (`resolver = "2"`, `members = ["crates/*"]`) producing a family of small CLI tools intended to be invoked by AI coding agents. The workspace deliberately couples two parallel directories:
