@@ -38,7 +38,6 @@ impl ResolveReason {
 pub struct Resolved<'a> {
     pub reference: &'a Reference,
     /// Matched definition (used by callers/callees commands; not yet consumed by find-refs).
-    #[allow(dead_code)]
     pub definition: Option<&'a Definition>,
     pub confidence: Confidence,
     pub reason: ResolveReason,
