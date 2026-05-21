@@ -48,3 +48,45 @@ fn rename_same_file_high_confidence_dry_run_default() {
     assert!(after.contains("struct User"), "dry-run modified the file: {after}");
     assert!(!after.contains("Account"), "dry-run wrote Account into the file");
 }
+
+#[test]
+fn rename_cross_file_import_resolved() {
+    let tmp = copy_fixture("cross_file_import");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(data["errors"].as_array().unwrap().is_empty(), "errors: {:?}", data["errors"]);
+
+    let applied = data["applied"].as_array().expect("applied array");
+    // Expect at least src/lib.rs to be touched (the import-resolved use).
+    // src/inner.rs contains the definition itself; whether its self-references
+    // count depends on the indexer — accept 1 or 2 files.
+    assert!(!applied.is_empty() && applied.len() <= 2, "got {} files: {applied:?}", applied.len());
+
+    let files: Vec<&str> = applied.iter()
+        .map(|f| f["file"].as_str().unwrap())
+        .collect();
+    assert!(
+        files.iter().any(|f| f.ends_with("lib.rs")),
+        "lib.rs not in applied: {files:?}",
+    );
+
+    let lib = applied.iter()
+        .find(|f| f["file"].as_str().unwrap().ends_with("lib.rs"))
+        .unwrap();
+    let lib_edits = lib["edits"].as_array().unwrap();
+    assert!(!lib_edits.is_empty(), "expected at least one edit in lib.rs");
+    for e in lib_edits {
+        assert_eq!(e["old"], "User");
+        assert_eq!(e["new"], "Account");
+        // import-resolved across files is "high" via ImportResolved reason.
+        assert_eq!(e["reason"], "import-resolved", "got {e:?}");
+        assert_eq!(e["confidence"], "high", "got {e:?}");
+    }
+}
