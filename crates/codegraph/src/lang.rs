@@ -1,0 +1,58 @@
+#![allow(dead_code)]
+
+use tree_sitter::Language as TsLanguage;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Language {
+    Rust,
+    TypeScript,
+    Tsx,
+    JavaScript,
+    Python,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum QueryKind {
+    Defs,
+    Imports,
+    Refs,
+}
+
+impl Language {
+    pub fn name(self) -> &'static str {
+        match self {
+            Language::Rust => "rust",
+            Language::TypeScript => "typescript",
+            Language::Tsx => "tsx",
+            Language::JavaScript => "javascript",
+            Language::Python => "python",
+        }
+    }
+
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        match ext {
+            "rs" => Some(Language::Rust),
+            "ts" => Some(Language::TypeScript),
+            "tsx" => Some(Language::Tsx),
+            "js" | "mjs" | "cjs" => Some(Language::JavaScript),
+            "py" => Some(Language::Python),
+            _ => None,
+        }
+    }
+
+    pub fn ts_language(self) -> TsLanguage {
+        match self {
+            Language::Rust => tree_sitter_rust::language(),
+            Language::TypeScript => tree_sitter_typescript::language_typescript(),
+            Language::Tsx => tree_sitter_typescript::language_tsx(),
+            Language::JavaScript => tree_sitter_javascript::language(),
+            Language::Python => tree_sitter_python::language(),
+        }
+    }
+
+    /// Returns `None` when the query for `(language, kind)` is not wired up yet.
+    /// Later tasks fill these in.
+    pub fn query_source(self, _kind: QueryKind) -> Option<&'static str> {
+        None
+    }
+}
