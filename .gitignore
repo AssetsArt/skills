@@ -6,3 +6,6 @@
 *.swp
 # Per-skill built binaries (produced by scripts/build-skills.sh or scripts/install.sh)
 skills/*/scripts/
+# Build artifacts under test fixtures (fixtures are read as source, not built reproducibly)
+crates/*/tests/fixtures/**/target/
+crates/*/tests/fixtures/**/Cargo.lock
