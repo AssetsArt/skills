@@ -41,7 +41,11 @@ fn rust_non_pub_use_is_not_a_reexport() {
     // It must NOT appear in either re-export table.
     let index = build_index(&fixture("reexport_rust")).unwrap();
     assert!(
-        index.alias_reexports.values().flat_map(|v| v.iter()).all(|s| s.alias != "Untouched"),
+        index
+            .alias_reexports
+            .values()
+            .flat_map(|v| v.iter())
+            .all(|s| s.alias != "Untouched"),
         "Untouched is a pub use without alias — should not be in alias_reexports",
     );
 }

@@ -162,7 +162,9 @@ pub fn build_index(root: &Path) -> Result<Index> {
             .into_owned();
         idx.file_meta.insert(
             rel.clone(),
-            FileMeta { len: source.len() as u64 },
+            FileMeta {
+                len: source.len() as u64,
+            },
         );
         if let Some(q) = f.language.query_source(QueryKind::Defs) {
             index_defs(&mut idx, &source, &rel, f.language, q)?;
@@ -264,8 +266,7 @@ fn index_imports(
             for cap in m.captures {
                 let cname = names[cap.index as usize];
                 if cname == "reexport_alias" || cname == "reexport_wildcard" {
-                    reexport_node_ranges
-                        .insert((cap.node.start_byte(), cap.node.end_byte()));
+                    reexport_node_ranges.insert((cap.node.start_byte(), cap.node.end_byte()));
                 }
             }
         }
@@ -274,7 +275,10 @@ fn index_imports(
     // Whether this language uses quoted string nodes for module paths (TS/JS) or bare
     // scoped-identifier paths (Rust). TS/JS `(string)` nodes include the surrounding
     // quote characters in their text, so we strip them before storing.
-    let path_uses_quotes = matches!(lang, Language::TypeScript | Language::Tsx | Language::JavaScript);
+    let path_uses_quotes = matches!(
+        lang,
+        Language::TypeScript | Language::Tsx | Language::JavaScript
+    );
 
     let mut cursor = QueryCursor::new();
     for m in cursor.matches(&query, tree.root_node(), bytes) {

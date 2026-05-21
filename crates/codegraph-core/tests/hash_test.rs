@@ -6,7 +6,9 @@ fn file_hash_display_is_lowercase_hex() {
     let hash = FileHash::new(bytes);
     let s = format!("{hash}");
     assert_eq!(s.len(), 64);
-    assert!(s.chars().all(|c| c.is_ascii_hexdigit() && (!c.is_alphabetic() || c.is_lowercase())));
+    assert!(s
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && (!c.is_alphabetic() || c.is_lowercase())));
     assert_eq!(s, "ab".repeat(32));
 }
 

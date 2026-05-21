@@ -1,6 +1,6 @@
 use crate::cli::CalleesArgs;
-use codegraph_core::index::{build_index, DefKind, RefKind};
 use crate::output::print_json;
+use codegraph_core::index::{build_index, DefKind, RefKind};
 use codegraph_core::resolve::resolve_refs;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet, VecDeque};
