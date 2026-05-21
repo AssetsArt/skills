@@ -31,7 +31,6 @@ pub enum AstEditError {
 impl AstEditError {
     /// The kebab-case string emitted as `error_kind` in the JSON envelope.
     /// Used by `crate::serialize::ErrorEntry` when building the JSON response.
-    #[allow(dead_code)]
     pub fn kind(&self) -> &'static str {
         match self {
             AstEditError::ParseError { .. }       => "parse-error",
@@ -47,7 +46,6 @@ impl AstEditError {
     /// `PatternCompile` is not file-scoped (it errors before any file is
     /// touched), so returns `None` for that variant.
     /// Used by `crate::serialize::ErrorEntry` when building the JSON response.
-    #[allow(dead_code)]
     pub fn file(&self) -> Option<&str> {
         match self {
             AstEditError::ParseError { file, .. }
