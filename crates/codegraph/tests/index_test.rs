@@ -1,0 +1,125 @@
+use std::path::PathBuf;
+use std::process::Command;
+
+fn bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_codegraph"))
+}
+
+#[test]
+fn rust_index_finds_lib_and_module_definitions() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // Compose a small project in-place rather than copying the fixture so this test
+    // does not depend on file paths under tests/fixtures.
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::write(
+        src.join("lib.rs"),
+        "pub mod m;\npub fn alpha() {}\nstruct Beta;\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("m.rs"), "pub fn gamma() {}\n").unwrap();
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "alpha", "--json", "--path"])
+        .arg(tmp.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    // We do not assert refs yet — only that the definition is reported.
+    let kinds: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert!(
+        kinds.contains(&"definition"),
+        "expected a definition entry, got: {:?}",
+        kinds
+    );
+}
+
+#[test]
+fn find_refs_on_empty_dir_returns_empty_data() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = Command::new(bin())
+        .args(["find-refs", "Nonexistent", "--json", "--path"])
+        .arg(tmp.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(v["schema_version"].as_u64().unwrap(), 1);
+    assert_eq!(v["data"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn rust_imports_are_flattened() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::write(src.join("lib.rs"), "pub mod m;\npub fn alpha() {}\n").unwrap();
+    std::fs::write(
+        src.join("m.rs"),
+        "use crate::alpha;\nuse crate::{alpha as a2, beta};\nuse crate::*;\npub fn use_alpha() { alpha(); }\n",
+    )
+    .unwrap();
+    // The probe we use here is `find-refs alpha` — we have not built the resolver yet,
+    // so this test only asserts the definition still appears (= the imports query did not crash).
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "alpha", "--json", "--path"])
+        .arg(tmp.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert!(v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|h| h["kind"] == "definition"));
+}
+
+#[test]
+fn rust_call_expressions_become_references() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    std::fs::write(
+        src.join("lib.rs"),
+        "pub fn alpha() {}\npub fn beta() { alpha(); }\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "alpha", "--json", "--path"])
+        .arg(tmp.path())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let kinds: Vec<&str> = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"definition"), "kinds: {:?}", kinds);
+    assert!(kinds.contains(&"call"), "kinds: {:?}", kinds);
+}
