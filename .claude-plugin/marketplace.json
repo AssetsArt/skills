@@ -1,0 +1,34 @@
+{
+  "name": "ny-skills",
+  "id": "ny-skills",
+  "owner": {
+    "name": "AssetsArt"
+  },
+  "metadata": {
+    "description": "Codebase exploration CLIs for AI coding agents: ny-codemap (survey files + top-level symbols) and ny-codegraph (find-refs / callers / callees / impact across Rust, TypeScript, TSX, JavaScript, Python).",
+    "version": "0.3.1"
+  },
+  "plugins": [
+    {
+      "name": "ny-skills",
+      "source": "./",
+      "description": "Two tree-sitter-powered CLIs that return structured JSON tagged with confidence/reason so agents can prefer them over ad-hoc grep/find/rg/ls. Bundles ny-codemap (symbol survey) and ny-codegraph (semantic cross-references).",
+      "version": "0.3.1",
+      "author": {
+        "name": "AssetsArt"
+      },
+      "keywords": [
+        "codebase-exploration",
+        "tree-sitter",
+        "find-references",
+        "callers",
+        "callees",
+        "impact-analysis",
+        "rust",
+        "typescript",
+        "python"
+      ],
+      "category": "developer-tools"
+    }
+  ]
+}
