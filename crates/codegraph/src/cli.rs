@@ -48,6 +48,7 @@ pub struct CallersArgs {
 #[derive(clap::Args, Debug)]
 pub struct CalleesArgs {
     pub name: String,
+    /// Recursive depth (1 = direct callees only)
     #[arg(long, default_value_t = 1)]
     pub depth: usize,
     #[arg(long, default_value = ".")]

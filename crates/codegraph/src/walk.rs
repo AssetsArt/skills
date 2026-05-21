@@ -11,6 +11,8 @@ pub struct SourceFile {
     pub language: Language,
 }
 
+/// Pre-configured walker honouring `.gitignore` and skipping `IGNORED_DIRS`.
+/// Other modules in this crate build on top of it so the exclusion list lives in one place.
 pub fn default_walker(root: &Path) -> WalkBuilder {
     let mut b = WalkBuilder::new(root);
     b.hidden(false)
@@ -24,6 +26,7 @@ pub fn default_walker(root: &Path) -> WalkBuilder {
     b
 }
 
+/// Walk `root`, returning files whose extension maps to a recognised `Language`.
 pub fn walk_sources(root: &Path) -> anyhow::Result<Vec<SourceFile>> {
     let mut out = Vec::new();
     for entry in default_walker(root).build() {

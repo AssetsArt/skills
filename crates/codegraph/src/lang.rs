@@ -11,7 +11,7 @@ pub enum Language {
     Python,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryKind {
     Defs,
     Imports,
@@ -51,7 +51,7 @@ impl Language {
     }
 
     /// Returns `None` when the query for `(language, kind)` is not wired up yet.
-    /// Later tasks fill these in.
+    /// Tasks 3, 6, 8, 16, 17, 18 fill these in.
     pub fn query_source(self, _kind: QueryKind) -> Option<&'static str> {
         None
     }
