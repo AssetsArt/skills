@@ -2,6 +2,7 @@ use codegraph_core::index::{build_index, DefKind};
 use codegraph_core::resolve::{resolve_refs, Confidence, Resolved};
 
 use crate::cli::RenameArgs;
+use crate::error::AstEditError;
 use crate::output::print_json;
 use crate::serialize::{AppliedEdit, AppliedFile, RenameData, SkippedSite};
 
@@ -93,7 +94,7 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
 
     let mut applied: Vec<AppliedFile> = Vec::new();
     let mut skipped: Vec<SkippedSite> = Vec::new();
-    let errors: Vec<crate::serialize::ErrorEntry> = Vec::new();
+    let mut errors: Vec<crate::serialize::ErrorEntry> = Vec::new();
 
     // Low-confidence refs go to skipped[low-confidence] (Task 11).
     for r in &resolved {
@@ -194,8 +195,10 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     }
 
     for (file, refs) in by_file {
-        let edits = build_edits(&file, &refs, &args, path)?;
-        applied.push(edits);
+        match build_edits(&file, &refs, &args, path, &index) {
+            Ok(entry) => applied.push(entry),
+            Err(e) => errors.push(crate::serialize::ErrorEntry::from(&e)),
+        }
     }
 
     let data = RenameData {
@@ -215,20 +218,13 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Construct an `AppliedFile` for one file. In dry-run, builds the edit list
-/// without touching disk. `--apply` write logic lands in Task 17.
 fn build_edits(
     file: &str,
     refs: &[&Resolved<'_>],
     args: &RenameArgs,
     root: &std::path::Path,
-) -> anyhow::Result<AppliedFile> {
-    // For now we use the reference's pre-computed `byte_offset` + len(OLD) for
-    // the replacement range. Trust comes from the index: build_index recorded
-    // the offset for an identifier whose name matched OLD at parse time.
-    // Task 17 adds writes + drift checking; this task only needs the dry-run shape.
-    let _ = root; // used in Task 17 (file IO)
-
+    index: &codegraph_core::index::Index,
+) -> Result<AppliedFile, AstEditError> {
     let old_len = args.old.len();
     let new_len = args.new.len();
     let mut edits: Vec<AppliedEdit> = Vec::new();
@@ -244,10 +240,50 @@ fn build_edits(
             reason: r.reason.as_str(),
         });
     }
-    // Sort by byte position descending so later steps apply in reverse.
     edits.sort_by_key(|e| std::cmp::Reverse(e.start_byte));
-
     let bytes_changed = (new_len as i64 - old_len as i64) * edits.len() as i64;
+
+    if args.apply {
+        let abs = root.join(file);
+
+        // Step 5a: drift check. Skip the file if it changed since indexing.
+        let meta = index.file_meta.get(file).ok_or_else(|| AstEditError::HashMismatch {
+            file: file.to_string(),
+        })?;
+        crate::apply::check_drift(&abs, file, meta, None)?;
+
+        // Read after drift passes.
+        let source = std::fs::read(&abs).map_err(|e| AstEditError::WriteFailed {
+            file: file.to_string(),
+            os_code: e.raw_os_error(),
+            message: e.to_string(),
+        })?;
+        let original_len = source.len() as u64;
+        let mut bytes = source;
+
+        // Defensive node-kind check + splice in descending byte order.
+        for e in &edits {
+            if e.end_byte > bytes.len() || &bytes[e.start_byte..e.end_byte] != args.old.as_bytes() {
+                return Err(AstEditError::NodeKindMismatch {
+                    file: file.to_string(),
+                    line: e.line,
+                    col: e.col,
+                });
+            }
+            bytes.splice(e.start_byte..e.end_byte, args.new.bytes());
+        }
+
+        // Step 5e: race-window guard. Re-stat just before the write and
+        // compare against the length we read into memory. Same-length
+        // concurrent writes slip through — accepted trade-off (spec).
+        let current = crate::apply::current_len(&abs, file)?;
+        if current != original_len {
+            return Err(AstEditError::ConcurrentWrite { file: file.to_string() });
+        }
+
+        // Step 5f: atomic write.
+        crate::apply::write_atomic(&abs, &bytes)?;
+    }
 
     Ok(AppliedFile {
         file: file.to_string(),

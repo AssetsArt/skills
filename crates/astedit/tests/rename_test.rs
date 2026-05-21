@@ -269,3 +269,36 @@ fn rename_with_anchor_picks_matching_definition() {
     let bad = applied.iter().find(|f| f["file"].as_str().unwrap().ends_with("b.rs"));
     assert!(bad.is_none(), "b.rs should not be in applied with anchor a.rs:1: {bad:?}");
 }
+
+#[test]
+fn rename_apply_writes_changes_to_disk() {
+    let tmp = copy_fixture("apply_write");
+    let path = tmp.path().to_str().unwrap();
+    let target = tmp.path().join("main.rs");
+    let before = std::fs::read_to_string(&target).unwrap();
+    assert!(before.contains("struct User"));
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--apply",
+        "--json",
+    ]);
+
+    assert_eq!(code, 0, "errors: {:?}", data["errors"]);
+    assert_eq!(data["dry_run"], false);
+    assert!(data["errors"].as_array().unwrap().is_empty(), "errors: {:?}", data["errors"]);
+
+    let after = std::fs::read_to_string(&target).unwrap();
+    assert!(!after.contains("struct User"), "User should be renamed");
+    assert!(after.contains("struct Account"), "Account should appear: {after}");
+    assert!(after.contains("Account { id: 42 }"), "body literal not renamed: {after}");
+    assert!(after.contains("-> Account"), "return type not renamed: {after}");
+
+    // `bytes_changed` should be (new - old) * #edits, where new=7, old=4, delta=+3.
+    let applied = data["applied"].as_array().unwrap();
+    let entry = applied.iter().find(|f| f["file"].as_str().unwrap().ends_with("main.rs")).unwrap();
+    let bytes_changed = entry["bytes_changed"].as_i64().unwrap();
+    let edit_count = entry["edits"].as_array().unwrap().len() as i64;
+    assert_eq!(bytes_changed, 3 * edit_count, "bytes_changed should be 3 per edit");
+}
