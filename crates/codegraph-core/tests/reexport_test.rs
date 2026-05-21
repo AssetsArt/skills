@@ -122,3 +122,29 @@ fn js_wildcard_reexport_recorded() {
     assert!(sites[0].file.ends_with("lib.js"));
     assert_eq!(sites[0].module_path, "./widgets");
 }
+
+#[test]
+fn python_alias_import_treated_as_reexport_site() {
+    let index = build_index(&fixture("reexport_py")).unwrap();
+    let sites = index
+        .alias_reexports
+        .get("Baz")
+        .expect("Baz alias should be recorded");
+    assert_eq!(sites.len(), 1);
+    assert!(sites[0].file.ends_with("lib.py"));
+    assert_eq!(sites[0].alias, "Baz");
+    assert_eq!(sites[0].original, "Bar");
+    assert_eq!(sites[0].module_path, "inner");
+}
+
+#[test]
+fn python_wildcard_import_treated_as_wildcard_reexport_site() {
+    let index = build_index(&fixture("reexport_py")).unwrap();
+    let sites = index
+        .wildcard_reexports
+        .get("widgets")
+        .expect("widgets wildcard import should be recorded");
+    assert_eq!(sites.len(), 1);
+    assert!(sites[0].file.ends_with("lib.py"));
+    assert_eq!(sites[0].module_path, "widgets");
+}
