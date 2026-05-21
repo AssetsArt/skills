@@ -75,7 +75,6 @@ pub struct Index {
 impl Index {
     /// Look up the definition that *contains* `byte_offset` in `file` — i.e. the function
     /// that the byte_offset's reference sits inside. Returns the innermost match.
-    #[allow(dead_code)] // used in Tasks 8+
     pub fn enclosing_definition(&self, file: &str, byte_offset: usize) -> Option<&Definition> {
         self.definitions
             .iter()
