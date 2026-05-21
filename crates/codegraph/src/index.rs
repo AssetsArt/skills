@@ -400,8 +400,21 @@ fn is_exported(node: tree_sitter::Node<'_>, bytes: &[u8], lang: Language) -> boo
             }
             false
         }
-        // TS/JS/Python wired in later tasks; default to exported=true for now so
-        // cross-file resolution does not silently miss things in those languages.
-        _ => true,
+        Language::TypeScript | Language::Tsx | Language::JavaScript => {
+            // Walk parents looking for an export_statement.
+            let mut p = node.parent();
+            while let Some(node) = p {
+                if node.kind() == "export_statement" || node.kind() == "export_clause" {
+                    return true;
+                }
+                p = node.parent();
+            }
+            false
+        }
+        Language::Python => {
+            // Module-level definitions are conventionally "public" — we leave this true for now
+            // and refine in Task 15 if necessary.
+            true
+        }
     }
 }

@@ -55,6 +55,15 @@ impl Language {
             (Language::Rust, QueryKind::Defs) => Some(include_str!("queries/rust_defs.scm")),
             (Language::Rust, QueryKind::Imports) => Some(include_str!("queries/rust_imports.scm")),
             (Language::Rust, QueryKind::Refs) => Some(include_str!("queries/rust_refs.scm")),
+            (Language::TypeScript | Language::Tsx, QueryKind::Defs) => {
+                Some(include_str!("queries/typescript_defs.scm"))
+            }
+            (Language::TypeScript | Language::Tsx, QueryKind::Imports) => {
+                Some(include_str!("queries/typescript_imports.scm"))
+            }
+            (Language::TypeScript | Language::Tsx, QueryKind::Refs) => {
+                Some(include_str!("queries/typescript_refs.scm"))
+            }
             _ => None,
         }
     }

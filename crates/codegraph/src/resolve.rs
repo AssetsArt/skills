@@ -128,22 +128,46 @@ fn module_matches(def: &Definition, imp: &Import) -> bool {
     if imp.module_path.is_empty() {
         return false;
     }
-    // Strip the crate root prefix.
-    let path = imp
-        .module_path
-        .trim_start_matches("crate::")
-        .trim_start_matches("self::")
-        .replace("::", "/");
+    let raw = imp.module_path.trim_matches('"').trim_matches('\'');
     let def_file = def.file.replace('\\', "/");
-    if path.is_empty() || path == "crate" {
-        // `use crate::*` — module_path was just "crate", treat it as the lib root.
-        return def_file == "src/lib.rs" || def_file == "src/main.rs" || def_file == "lib.rs";
+
+    // Rust-style first.
+    if raw.starts_with("crate::") || raw == "crate" || raw.starts_with("self::") {
+        let path = raw
+            .trim_start_matches("crate::")
+            .trim_start_matches("self::")
+            .replace("::", "/");
+        if path.is_empty() {
+            return def_file == "src/lib.rs" || def_file == "src/main.rs" || def_file == "lib.rs";
+        }
+        return [
+            format!("src/{path}.rs"),
+            format!("src/{path}/mod.rs"),
+            format!("{path}.rs"),
+            format!("{path}/mod.rs"),
+        ]
+        .iter()
+        .any(|s| s == &def_file);
     }
-    let stem_variants = [
-        format!("src/{path}.rs"),
-        format!("src/{path}/mod.rs"),
-        format!("{path}.rs"),
-        format!("{path}/mod.rs"),
-    ];
-    stem_variants.iter().any(|s| s == &def_file)
+
+    // JS/TS-style relative paths.
+    if raw.starts_with("./") || raw.starts_with("../") || raw.starts_with('/') {
+        // We don't know the importing file's location here — match against def file's stem.
+        let trimmed = raw.trim_start_matches("./");
+        let trimmed = trimmed
+            .trim_end_matches(".ts")
+            .trim_end_matches(".tsx")
+            .trim_end_matches(".js")
+            .trim_end_matches(".mjs")
+            .trim_end_matches(".cjs");
+        let import_last = trimmed.rsplit('/').next().unwrap_or(trimmed);
+        let def_stem = std::path::Path::new(&def_file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        return import_last == def_stem;
+    }
+
+    // Python dotted path — handled in Task 15.
+    false
 }
