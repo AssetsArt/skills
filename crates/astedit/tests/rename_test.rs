@@ -241,3 +241,31 @@ fn rename_multi_def_without_anchor_needs_anchor_envelope() {
     match data.get("skipped") { None => {}, Some(v) if v.is_null() => {}, Some(other) => panic!("skipped should be absent: {other:?}") }
     match data.get("errors")  { None => {}, Some(v) if v.is_null() => {}, Some(other) => panic!("errors should be absent: {other:?}") }
 }
+
+#[test]
+fn rename_with_anchor_picks_matching_definition() {
+    let tmp = copy_fixture("multi_def");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--anchor", "src/a.rs:1",
+        "--json",
+    ]);
+
+    assert_eq!(code, 0, "anchor present → exit 0: data was {data:?}");
+    match data.get("needs_anchor") { None => {}, Some(v) if v.is_null() => {}, Some(other) => panic!("needs_anchor should be absent: {other:?}") }
+
+    // The `fn User` in b.rs must not be touched — its references should not
+    // appear in applied.
+    let applied = data["applied"].as_array().expect("applied array");
+    for f in applied {
+        let file = f["file"].as_str().unwrap();
+        assert!(file.ends_with("a.rs") || file.ends_with("lib.rs"),
+            "anchor picked struct in a.rs; b.rs should not appear: {file}");
+    }
+    // Specifically: b.rs must NOT be in applied
+    let bad = applied.iter().find(|f| f["file"].as_str().unwrap().ends_with("b.rs"));
+    assert!(bad.is_none(), "b.rs should not be in applied with anchor a.rs:1: {bad:?}");
+}

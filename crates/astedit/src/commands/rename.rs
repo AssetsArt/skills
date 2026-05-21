@@ -23,8 +23,8 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     let def_files: std::collections::HashSet<&str> =
         defs.iter().map(|d| d.file.as_str()).collect();
 
+    // Multi-def + no anchor → emit needs_anchor envelope + non-zero exit.
     if def_files.len() > 1 && args.anchor.is_none() {
-        // Multi-def disambiguation: emit needs_anchor + candidates and exit non-zero.
         let candidates: Vec<crate::serialize::Candidate> = defs
             .iter()
             .map(|d| crate::serialize::Candidate {
@@ -47,6 +47,49 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
         }
         return Ok(2);
     }
+
+    // Pick the chosen definition. With --anchor present (or single def), this
+    // narrows the resolved set to refs that resolve to that specific def.
+    // Same-file multi-defs (def_files.len() == 1, defs.len() > 1) have no
+    // cross-file ambiguity, so we don't require an anchor — treat as unfiltered.
+    let chosen_def: Option<&codegraph_core::index::Definition> = match (defs.len(), args.anchor.as_deref()) {
+        (0, _) => None,
+        (1, _) => Some(defs[0]),
+        (_, Some(anchor)) => {
+            let (file, line) = parse_anchor(anchor)?;
+            Some(
+                defs.iter()
+                    .find(|d| d.file == file && d.line == line)
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "anchor {file}:{line} did not match any definition of {}",
+                        args.old,
+                    ))?,
+            )
+        }
+        // Same-file multi-def (def_files.len() == 1) with no anchor: no
+        // cross-file filtering needed; the resolver handles same-file scope.
+        (_, None) => None,
+    };
+
+    // When chosen_def is set, filter resolved to refs that pin to that def.
+    // Low-confidence refs (definition is None) stay in regardless of anchor —
+    // they aren't tied to any specific def and we still want to surface them
+    // as skipped[low-confidence].
+    let resolved: Vec<Resolved<'_>> = if let Some(def) = chosen_def {
+        resolved
+            .into_iter()
+            .filter(|r| match r.confidence {
+                Confidence::Low => true,
+                _ => match r.definition {
+                    Some(d) => d.file == def.file && d.line == def.line && d.kind == def.kind,
+                    None => r.reference.file == def.file,
+                },
+            })
+            .collect()
+    } else {
+        resolved
+    };
 
     let mut applied: Vec<AppliedFile> = Vec::new();
     let mut skipped: Vec<SkippedSite> = Vec::new();
@@ -226,4 +269,18 @@ fn def_kind_str(k: DefKind) -> &'static str {
         Const => "const",
         Method => "method",
     }
+}
+
+/// Parse a `--anchor FILE:LINE` value into `(file, line)`. The file is the
+/// repo-relative, forward-slash-normalized form the index uses; the line is
+/// 1-based.
+fn parse_anchor(s: &str) -> anyhow::Result<(String, usize)> {
+    let (file, line) = s.rsplit_once(':')
+        .ok_or_else(|| anyhow::anyhow!("--anchor expected FILE:LINE, got {s:?}"))?;
+    let line: usize = line.parse()
+        .map_err(|_| anyhow::anyhow!("--anchor line must be a positive integer, got {line:?}"))?;
+    if line == 0 {
+        anyhow::bail!("--anchor line must be 1-based, got 0");
+    }
+    Ok((file.to_string(), line))
 }
