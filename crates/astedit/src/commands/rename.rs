@@ -13,7 +13,7 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     let resolved = resolve_refs(&index, &args.old);
 
     let mut applied: Vec<AppliedFile> = Vec::new();
-    let skipped: Vec<SkippedSite> = Vec::new();
+    let mut skipped: Vec<SkippedSite> = Vec::new();
     let errors: Vec<crate::serialize::ErrorEntry> = Vec::new();
 
     // Group queue-for-edit refs by file. Low confidence and re-export traversal
@@ -25,7 +25,19 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
                 by_file.entry(r.reference.file.clone()).or_default().push(r);
             }
             Confidence::Low => {
-                // Wired in Task 11.
+                skipped.push(SkippedSite {
+                    file: r.reference.file.clone(),
+                    line: r.reference.line,
+                    col: r.reference.column,
+                    start_byte: r.reference.byte_offset,
+                    end_byte: r.reference.byte_offset + args.old.len(),
+                    name: r.reference.name.clone(),
+                    confidence: r.confidence.as_str(),
+                    reason: r.reason.as_str(),
+                    skip_reason: "low-confidence",
+                    via_alias: None,
+                    via_module: None,
+                });
             }
         }
     }

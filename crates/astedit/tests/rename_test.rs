@@ -114,3 +114,36 @@ fn rename_glob_import_medium_confidence_applied() {
         assert_eq!(e["confidence"], "medium", "expected medium for glob import: {e:?}");
     }
 }
+
+#[test]
+fn rename_name_only_goes_to_skipped_low_confidence() {
+    let tmp = copy_fixture("name_only");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rename", "User", "Account",
+        "--path", path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+
+    let skipped = data["skipped"].as_array().expect("skipped array");
+    let lows: Vec<&serde_json::Value> = skipped.iter()
+        .filter(|s| s["skip_reason"] == "low-confidence")
+        .collect();
+    assert!(!lows.is_empty(), "expected at least one low-confidence skip; skipped: {skipped:?}");
+
+    for s in &lows {
+        assert_eq!(s["confidence"], "low");
+        assert_eq!(s["reason"], "name-only");
+        assert_eq!(s["name"], "User");
+        assert!(s["file"].as_str().unwrap().ends_with("unrelated.rs"));
+    }
+
+    // unrelated.rs must NOT appear in applied.
+    let applied = data["applied"].as_array().unwrap();
+    let bad = applied.iter()
+        .find(|f| f["file"].as_str().unwrap().ends_with("unrelated.rs"));
+    assert!(bad.is_none(), "unrelated.rs should not be in applied: {bad:?}");
+}
