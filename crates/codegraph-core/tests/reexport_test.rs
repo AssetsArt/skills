@@ -69,3 +69,56 @@ fn rust_direct_reexport_stays_in_imports() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts_alias_reexport_recorded() {
+    let index = build_index(&fixture("reexport_ts")).unwrap();
+    let sites = index
+        .alias_reexports
+        .get("Baz")
+        .expect("Baz alias should be recorded");
+    assert_eq!(sites.len(), 1);
+    assert!(sites[0].file.ends_with("lib.ts"));
+    assert_eq!(sites[0].alias, "Baz");
+    assert_eq!(sites[0].original, "Bar");
+    assert_eq!(sites[0].module_path, "./inner");
+}
+
+#[test]
+fn ts_wildcard_reexport_recorded() {
+    let index = build_index(&fixture("reexport_ts")).unwrap();
+    // Wildcard re-exports key on the trailing module-name segment.
+    let sites = index
+        .wildcard_reexports
+        .get("widgets")
+        .expect("widgets wildcard re-export should be recorded");
+    assert_eq!(sites.len(), 1);
+    assert!(sites[0].file.ends_with("lib.ts"));
+    assert_eq!(sites[0].module_path, "./widgets");
+}
+
+#[test]
+fn js_alias_reexport_recorded() {
+    let index = build_index(&fixture("reexport_js")).unwrap();
+    let sites = index
+        .alias_reexports
+        .get("Baz")
+        .expect("Baz alias should be recorded");
+    assert_eq!(sites.len(), 1);
+    assert!(sites[0].file.ends_with("lib.js"));
+    assert_eq!(sites[0].alias, "Baz");
+    assert_eq!(sites[0].original, "Bar");
+    assert_eq!(sites[0].module_path, "./inner");
+}
+
+#[test]
+fn js_wildcard_reexport_recorded() {
+    let index = build_index(&fixture("reexport_js")).unwrap();
+    let sites = index
+        .wildcard_reexports
+        .get("widgets")
+        .expect("widgets wildcard re-export should be recorded");
+    assert_eq!(sites.len(), 1);
+    assert!(sites[0].file.ends_with("lib.js"));
+    assert_eq!(sites[0].module_path, "./widgets");
+}

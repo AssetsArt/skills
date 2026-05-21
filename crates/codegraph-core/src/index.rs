@@ -271,11 +271,17 @@ fn index_imports(
         }
     }
 
+    // Whether this language uses quoted string nodes for module paths (TS/JS) or bare
+    // scoped-identifier paths (Rust). TS/JS `(string)` nodes include the surrounding
+    // quote characters in their text, so we strip them before storing.
+    let path_uses_quotes = matches!(lang, Language::TypeScript | Language::Tsx | Language::JavaScript);
+
     let mut cursor = QueryCursor::new();
     for m in cursor.matches(&query, tree.root_node(), bytes) {
         let mut path_text: Option<String> = None;
         let mut single_name: Option<String> = None;
         let mut alias: Option<String> = None;
+        let mut original_name: Option<String> = None;
         let mut group_node: Option<tree_sitter::Node<'_>> = None;
         let mut import_node: Option<tree_sitter::Node<'_>> = None;
         let mut is_reexport_alias = false;
@@ -287,6 +293,7 @@ fn index_imports(
                 "path" => path_text = Some(text),
                 "name" => single_name = Some(text),
                 "alias" => alias = Some(text),
+                "original" => original_name = Some(text),
                 "group" => group_node = Some(cap.node),
                 "import" => import_node = Some(cap.node),
                 "reexport_alias" => {
@@ -301,7 +308,15 @@ fn index_imports(
             }
         }
         let line = import_node.map(|n| n.start_position().row + 1).unwrap_or(0);
-        let module_path = path_text.unwrap_or_default();
+        // Strip surrounding quote characters for TS/JS string nodes.
+        let module_path = {
+            let raw = path_text.unwrap_or_default();
+            if path_uses_quotes {
+                raw.trim_matches('"').trim_matches('\'').to_string()
+            } else {
+                raw
+            }
+        };
 
         // If this is a plain @import match for a use_declaration that was ALSO matched by
         // a reexport-specific pattern, skip it — the reexport branch below will handle it.
@@ -316,14 +331,23 @@ fn index_imports(
             }
         }
 
-        // Re-export patterns fire when `pub` is present — route them to their own tables.
+        // Re-export patterns fire when `pub` is present (Rust) or on export_statement
+        // (TS/JS) — route them to their own tables.
         if is_reexport_alias {
             if let Some(a) = alias {
-                let original = module_path
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(&module_path)
-                    .to_string();
+                // TS/JS: `original` comes from the explicit @original capture (the `name`
+                // field of export_specifier). Rust: derive from the last `::` segment of
+                // the module path since `use foo::Bar as Baz` encodes the original name
+                // as the final path component.
+                let original = if let Some(orig) = original_name {
+                    orig
+                } else {
+                    module_path
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(&module_path)
+                        .to_string()
+                };
                 idx.alias_reexports
                     .entry(a.clone())
                     .or_default()
@@ -338,9 +362,11 @@ fn index_imports(
             continue;
         }
         if is_reexport_wildcard {
+            // TS/JS paths are slash-separated (e.g. "./widgets"), Rust paths use `::`.
+            // Key on the last segment regardless of separator.
             let key = module_path
-                .rsplit("::")
-                .next()
+                .rsplit(['/', ':'])
+                .find(|s| !s.is_empty())
                 .unwrap_or(&module_path)
                 .to_string();
             idx.wildcard_reexports
