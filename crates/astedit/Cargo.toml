@@ -1,0 +1,29 @@
+[package]
+name = "astedit"
+description = "AST-validated rename and structural rewrite tool for AI coding agents."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "astedit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "astedit"
+path = "src/main.rs"
+
+[dependencies]
+codegraph-core    = { path = "../codegraph-core" }
+clap              = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+anyhow            = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
