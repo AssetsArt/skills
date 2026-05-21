@@ -66,6 +66,7 @@ pub struct Reference {
 }
 
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct Index {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
