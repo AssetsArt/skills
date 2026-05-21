@@ -17,15 +17,26 @@
 
 ## Install (end users)
 
-### One-liner (no clone)
+### Via Claude Code plugin (recommended — auto-updates the SKILL manifests)
+
+In a Claude Code session:
+
+```text
+/plugin marketplace add AssetsArt/skills
+/plugin install ny-skills
+```
+
+Claude Code refreshes the SKILL manifests on every restart and on `/reload-plugins`, so pushes to `main` reach agents automatically. The plugin ships `SKILL.md` + query files; the compiled CLI binary still needs to be fetched once with the installer below.
+
+### One-liner (no clone) — also fetches the platform binary
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh
 # pin a specific version:
-curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh -s -- v0.1.2
+curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh -s -- v0.2.2
 ```
 
-The script fetches the repo's source tarball at the resolved tag (no `git` required) and stages each skill into `~/.claude/skills/ny-<name>/`. Override the destination with `CLAUDE_SKILLS_DIR=/some/path`.
+The script fetches the repo's source tarball at the resolved tag (no `git` required) and stages each skill into `~/.claude/skills/ny-<name>/`. Override the destination with `CLAUDE_SKILLS_DIR=/some/path`. Use this in addition to the plugin install above (or on its own) — the plugin handles SKILL.md updates, this handles binary updates.
 
 ### From a checkout
 

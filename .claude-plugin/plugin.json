@@ -1,0 +1,10 @@
+{
+  "name": "ny-skills",
+  "description": "Codebase exploration CLIs for AI coding agents: ny-codemap surveys files and top-level symbols, ny-codegraph resolves cross-references (find-refs / callers / callees / impact). Both return structured JSON tagged with confidence/reason so agents can prefer them over ad-hoc grep/find/rg/ls.",
+  "author": {
+    "name": "AssetsArt"
+  },
+  "homepage": "https://github.com/AssetsArt/skills",
+  "repository": "https://github.com/AssetsArt/skills",
+  "license": "MIT"
+}
