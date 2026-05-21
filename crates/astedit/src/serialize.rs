@@ -61,7 +61,7 @@ pub struct SkippedSite {
     pub reason: &'static str,
     pub skip_reason: &'static str, // "low-confidence" | "re-export-alias" | "wildcard-reexport"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub via_alias: Option<String>,  // only for skip_reason == "re-export-alias"
+    pub via_alias: Option<String>, // only for skip_reason == "re-export-alias"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via_module: Option<String>, // only for skip_reason == "wildcard-reexport"
 }
@@ -104,7 +104,9 @@ impl From<&crate::error::AstEditError> for ErrorEntry {
                 entry.line = Some(*line);
                 entry.col = Some(*col);
             }
-            E::WriteFailed { os_code, message, .. } => {
+            E::WriteFailed {
+                os_code, message, ..
+            } => {
                 entry.os_code = *os_code;
                 entry.message = Some(message.clone());
             }
@@ -162,8 +164,10 @@ mod tests {
     fn skipped_site_alias_carries_via_alias_only() {
         let s = SkippedSite {
             file: "src/lib.rs".into(),
-            line: 4, col: 0,
-            start_byte: 10, end_byte: 14,
+            line: 4,
+            col: 0,
+            start_byte: 10,
+            end_byte: 14,
             name: "User".into(),
             confidence: "high",
             reason: "same-file-scope",

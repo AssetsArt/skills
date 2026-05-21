@@ -85,7 +85,9 @@ pub fn check_drift(
     })?;
     match index_hash {
         Some(h) if h == &on_disk => Ok(()),
-        _ => Err(AstEditError::HashMismatch { file: rel_path.to_string() }),
+        _ => Err(AstEditError::HashMismatch {
+            file: rel_path.to_string(),
+        }),
     }
 }
 
@@ -133,7 +135,11 @@ mod tests {
             .filter_map(|e| {
                 let p = e.unwrap().path();
                 let n = p.file_name().unwrap().to_string_lossy().to_string();
-                if n.ends_with(".astedit.tmp") { Some(p) } else { None }
+                if n.ends_with(".astedit.tmp") {
+                    Some(p)
+                } else {
+                    None
+                }
             })
             .collect();
         assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");

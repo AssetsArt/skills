@@ -19,10 +19,18 @@ pub enum AstEditError {
     ConcurrentWrite { file: String },
 
     #[error("node kind mismatch at {file}:{line}:{col}")]
-    NodeKindMismatch { file: String, line: usize, col: usize },
+    NodeKindMismatch {
+        file: String,
+        line: usize,
+        col: usize,
+    },
 
     #[error("write failed on {file}: {message}")]
-    WriteFailed { file: String, os_code: Option<i32>, message: String },
+    WriteFailed {
+        file: String,
+        os_code: Option<i32>,
+        message: String,
+    },
 
     #[error("pattern failed to compile for {lang}: {message}")]
     PatternCompile { lang: String, message: String },
@@ -33,12 +41,12 @@ impl AstEditError {
     /// Used by `crate::serialize::ErrorEntry` when building the JSON response.
     pub fn kind(&self) -> &'static str {
         match self {
-            AstEditError::ParseError { .. }       => "parse-error",
-            AstEditError::HashMismatch { .. }     => "hash-mismatch",
-            AstEditError::ConcurrentWrite { .. }  => "concurrent-write",
+            AstEditError::ParseError { .. } => "parse-error",
+            AstEditError::HashMismatch { .. } => "hash-mismatch",
+            AstEditError::ConcurrentWrite { .. } => "concurrent-write",
             AstEditError::NodeKindMismatch { .. } => "node-kind-mismatch",
-            AstEditError::WriteFailed { .. }      => "write-failed",
-            AstEditError::PatternCompile { .. }   => "pattern-compile",
+            AstEditError::WriteFailed { .. } => "write-failed",
+            AstEditError::PatternCompile { .. } => "pattern-compile",
         }
     }
 
@@ -64,11 +72,47 @@ mod tests {
 
     #[test]
     fn error_kind_strings_match_spec() {
-        assert_eq!(AstEditError::ParseError { file: "x".into(), message: "y".into() }.kind(), "parse-error");
-        assert_eq!(AstEditError::HashMismatch { file: "x".into() }.kind(), "hash-mismatch");
-        assert_eq!(AstEditError::ConcurrentWrite { file: "x".into() }.kind(), "concurrent-write");
-        assert_eq!(AstEditError::NodeKindMismatch { file: "x".into(), line: 1, col: 1 }.kind(), "node-kind-mismatch");
-        assert_eq!(AstEditError::WriteFailed { file: "x".into(), os_code: None, message: "y".into() }.kind(), "write-failed");
-        assert_eq!(AstEditError::PatternCompile { lang: "rust".into(), message: "y".into() }.kind(), "pattern-compile");
+        assert_eq!(
+            AstEditError::ParseError {
+                file: "x".into(),
+                message: "y".into()
+            }
+            .kind(),
+            "parse-error"
+        );
+        assert_eq!(
+            AstEditError::HashMismatch { file: "x".into() }.kind(),
+            "hash-mismatch"
+        );
+        assert_eq!(
+            AstEditError::ConcurrentWrite { file: "x".into() }.kind(),
+            "concurrent-write"
+        );
+        assert_eq!(
+            AstEditError::NodeKindMismatch {
+                file: "x".into(),
+                line: 1,
+                col: 1
+            }
+            .kind(),
+            "node-kind-mismatch"
+        );
+        assert_eq!(
+            AstEditError::WriteFailed {
+                file: "x".into(),
+                os_code: None,
+                message: "y".into()
+            }
+            .kind(),
+            "write-failed"
+        );
+        assert_eq!(
+            AstEditError::PatternCompile {
+                lang: "rust".into(),
+                message: "y".into()
+            }
+            .kind(),
+            "pattern-compile"
+        );
     }
 }

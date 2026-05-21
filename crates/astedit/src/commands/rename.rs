@@ -21,8 +21,7 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
 
     // Count distinct files; same-file multiple defs (e.g. nested modules) are
     // handled by the resolver — only cross-file ambiguity requires --anchor.
-    let def_files: std::collections::HashSet<&str> =
-        defs.iter().map(|d| d.file.as_str()).collect();
+    let def_files: std::collections::HashSet<&str> = defs.iter().map(|d| d.file.as_str()).collect();
 
     // Multi-def + no anchor → emit needs_anchor envelope + non-zero exit.
     if def_files.len() > 1 && args.anchor.is_none() {
@@ -53,25 +52,28 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
     // narrows the resolved set to refs that resolve to that specific def.
     // Same-file multi-defs (def_files.len() == 1, defs.len() > 1) have no
     // cross-file ambiguity, so we don't require an anchor — treat as unfiltered.
-    let chosen_def: Option<&codegraph_core::index::Definition> = match (defs.len(), args.anchor.as_deref()) {
-        (0, _) => None,
-        (1, _) => Some(defs[0]),
-        (_, Some(anchor)) => {
-            let (file, line) = parse_anchor(anchor)?;
-            Some(
-                defs.iter()
-                    .find(|d| d.file == file && d.line == line)
-                    .copied()
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "anchor {file}:{line} did not match any definition of {}",
-                        args.old,
-                    ))?,
-            )
-        }
-        // Same-file multi-def (def_files.len() == 1) with no anchor: no
-        // cross-file filtering needed; the resolver handles same-file scope.
-        (_, None) => None,
-    };
+    let chosen_def: Option<&codegraph_core::index::Definition> =
+        match (defs.len(), args.anchor.as_deref()) {
+            (0, _) => None,
+            (1, _) => Some(defs[0]),
+            (_, Some(anchor)) => {
+                let (file, line) = parse_anchor(anchor)?;
+                Some(
+                    defs.iter()
+                        .find(|d| d.file == file && d.line == line)
+                        .copied()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "anchor {file}:{line} did not match any definition of {}",
+                                args.old,
+                            )
+                        })?,
+                )
+            }
+            // Same-file multi-def (def_files.len() == 1) with no anchor: no
+            // cross-file filtering needed; the resolver handles same-file scope.
+            (_, None) => None,
+        };
 
     // When chosen_def is set, filter resolved to refs that pin to that def.
     // Low-confidence refs (definition is None) stay in regardless of anchor —
@@ -149,7 +151,11 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
             // Cheap match: the module path's tail segment appears in some
             // definition-file's path. e.g. module_path "crate::inner" tail
             // "inner" matches "src/inner.rs" in `defines_old`.
-            let tail = site.module_path.rsplit("::").next().unwrap_or(&site.module_path);
+            let tail = site
+                .module_path
+                .rsplit("::")
+                .next()
+                .unwrap_or(&site.module_path);
             let related = defines_old.iter().any(|f| {
                 let stem = std::path::Path::new(f)
                     .file_stem()
@@ -157,12 +163,16 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
                     .unwrap_or("");
                 stem == tail
             });
-            if !related { continue; }
+            if !related {
+                continue;
+            }
 
-            let already = skipped.iter().any(|s|
+            let already = skipped.iter().any(|s| {
                 s.file == site.file && s.line == site.line && s.skip_reason == "wildcard-reexport"
-            );
-            if already { continue; }
+            });
+            if already {
+                continue;
+            }
 
             skipped.push(SkippedSite {
                 file: site.file.clone(),
@@ -189,8 +199,12 @@ pub fn run(args: RenameArgs) -> anyhow::Result<i32> {
 
     let mut by_file: std::collections::BTreeMap<String, Vec<&Resolved>> = Default::default();
     for r in &resolved {
-        if !matches!(r.confidence, Confidence::High | Confidence::Medium) { continue; }
-        if alias_keys.contains(&(r.reference.file.clone(), r.reference.line)) { continue; }
+        if !matches!(r.confidence, Confidence::High | Confidence::Medium) {
+            continue;
+        }
+        if alias_keys.contains(&(r.reference.file.clone(), r.reference.line)) {
+            continue;
+        }
         by_file.entry(r.reference.file.clone()).or_default().push(r);
     }
 
@@ -247,9 +261,12 @@ fn build_edits(
         let abs = root.join(file);
 
         // Step 5a: drift check. Skip the file if it changed since indexing.
-        let meta = index.file_meta.get(file).ok_or_else(|| AstEditError::HashMismatch {
-            file: file.to_string(),
-        })?;
+        let meta = index
+            .file_meta
+            .get(file)
+            .ok_or_else(|| AstEditError::HashMismatch {
+                file: file.to_string(),
+            })?;
         crate::apply::check_drift(&abs, file, meta, None)?;
 
         // Read after drift passes.
@@ -278,7 +295,9 @@ fn build_edits(
         // concurrent writes slip through — accepted trade-off (spec).
         let current = crate::apply::current_len(&abs, file)?;
         if current != original_len {
-            return Err(AstEditError::ConcurrentWrite { file: file.to_string() });
+            return Err(AstEditError::ConcurrentWrite {
+                file: file.to_string(),
+            });
         }
 
         // Step 5f: atomic write.
@@ -311,9 +330,11 @@ fn def_kind_str(k: DefKind) -> &'static str {
 /// repo-relative, forward-slash-normalized form the index uses; the line is
 /// 1-based.
 fn parse_anchor(s: &str) -> anyhow::Result<(String, usize)> {
-    let (file, line) = s.rsplit_once(':')
+    let (file, line) = s
+        .rsplit_once(':')
         .ok_or_else(|| anyhow::anyhow!("--anchor expected FILE:LINE, got {s:?}"))?;
-    let line: usize = line.parse()
+    let line: usize = line
+        .parse()
         .map_err(|_| anyhow::anyhow!("--anchor line must be a positive integer, got {line:?}"))?;
     if line == 0 {
         anyhow::bail!("--anchor line must be 1-based, got 0");

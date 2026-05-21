@@ -51,9 +51,12 @@ pub fn run_astedit_json(args: &[&str]) -> (i32, serde_json::Value) {
         .expect("spawn astedit");
     let code = out.status.code().unwrap_or(-1);
     let stdout = std::str::from_utf8(&out.stdout).expect("stdout utf8");
-    let env: serde_json::Value = serde_json::from_str(stdout)
-        .unwrap_or_else(|e| panic!("parse JSON: {e}\nstdout was: {stdout}\nstderr was: {}",
-            std::str::from_utf8(&out.stderr).unwrap_or("(non-utf8)")));
+    let env: serde_json::Value = serde_json::from_str(stdout).unwrap_or_else(|e| {
+        panic!(
+            "parse JSON: {e}\nstdout was: {stdout}\nstderr was: {}",
+            std::str::from_utf8(&out.stderr).unwrap_or("(non-utf8)")
+        )
+    });
     assert_eq!(env["schema_version"], 1, "schema_version must be 1");
     (code, env["data"].clone())
 }
