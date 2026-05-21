@@ -85,6 +85,28 @@ jobs:
           done
           echo "packaging ${#skills[@]} skill(s) for ${{ matrix.slug }}"
 
+      - name: Audit binary crates have skill dirs
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          failed=0
+          for c in crates/*/; do
+            c="${c%/}"
+            name="${c#crates/}"
+            # Skip lib-only crates (no [[bin]] section in Cargo.toml).
+            if ! grep -q '^\[\[bin\]\]' "$c/Cargo.toml"; then
+              continue
+            fi
+            if [ ! -f "skills/ny-$name/SKILL.md" ]; then
+              echo "::error::binary crate $name has no matching skills/ny-$name/SKILL.md"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Build (cargo)
         if: matrix.builder == 'cargo'
         run: cargo build --workspace --release --locked --target ${{ matrix.triple }}
