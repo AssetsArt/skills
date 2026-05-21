@@ -168,6 +168,22 @@ fn module_matches(def: &Definition, imp: &Import) -> bool {
         return import_last == def_stem;
     }
 
-    // Python dotted path — handled in Task 15.
+    // Python dotted paths. Examples:
+    //   `.user`              → relative; match against any file with stem == "user".
+    //   `package.user`       → match against `package/user.py`.
+    //   `package.user.sub`   → match against `package/user/sub.py`.
+    if raw.starts_with('.') || raw.chars().any(|c| c == '.') {
+        let normalized = raw.trim_start_matches('.').replace('.', "/");
+        let candidates = [
+            format!("{normalized}.py"),
+            format!("{normalized}/__init__.py"),
+        ];
+        let def_stem = std::path::Path::new(&def_file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let last = normalized.rsplit('/').next().unwrap_or(&normalized);
+        return candidates.iter().any(|c| def_file.ends_with(c)) || def_stem == last;
+    }
     false
 }

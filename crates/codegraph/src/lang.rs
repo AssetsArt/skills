@@ -48,8 +48,8 @@ impl Language {
         }
     }
 
-    /// Returns `None` when the query for `(language, kind)` is not wired up yet.
-    /// Tasks 3, 6, 8, 16, 17, 18 fill these in.
+    /// Returns the tree-sitter S-expression query source for the given language and kind.
+    /// All combinations are now wired; the function always returns `Some`.
     pub fn query_source(self, kind: QueryKind) -> Option<&'static str> {
         match (self, kind) {
             (Language::Rust, QueryKind::Defs) => Some(include_str!("queries/rust_defs.scm")),
@@ -73,7 +73,11 @@ impl Language {
             (Language::JavaScript, QueryKind::Refs) => {
                 Some(include_str!("queries/javascript_refs.scm"))
             }
-            _ => None,
+            (Language::Python, QueryKind::Defs) => Some(include_str!("queries/python_defs.scm")),
+            (Language::Python, QueryKind::Imports) => {
+                Some(include_str!("queries/python_imports.scm"))
+            }
+            (Language::Python, QueryKind::Refs) => Some(include_str!("queries/python_refs.scm")),
         }
     }
 }

@@ -121,3 +121,30 @@ fn js_cross_file_import_resolves() {
         .expect("index.js call to add");
     assert_eq!(call["confidence"], "high");
 }
+
+fn py_fixture() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/multi_lang/py_app")
+}
+
+#[test]
+fn python_cross_file_import_resolves() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+        .args(["find-refs", "authenticate", "--json", "--path"])
+        .arg(py_fixture())
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let cross = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["file"].as_str().unwrap().ends_with("handlers.py") && h["kind"] == "call")
+        .expect("handlers.py call to authenticate");
+    assert_eq!(cross["confidence"], "high");
+    assert_eq!(cross["reason"], "import-resolved");
+}
