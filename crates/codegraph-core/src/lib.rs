@@ -15,3 +15,6 @@ pub mod resolve;
 pub mod index;
 
 pub mod hash;
+
+pub mod error;
+pub use error::CoreError;
