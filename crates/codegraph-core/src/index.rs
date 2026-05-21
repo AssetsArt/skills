@@ -65,12 +65,22 @@ pub struct Reference {
     pub context: String,
 }
 
+/// Snapshot of stat-time metadata for one source file. Populated during
+/// `build_index`. Used by `astedit` for cheap drift detection between
+/// index build and apply.
+#[derive(Debug, Clone, Default, Serialize)]
+#[non_exhaustive]
+pub struct FileMeta {
+    pub len: u64,
+}
+
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Index {
     pub definitions: Vec<Definition>,
     pub imports: Vec<Import>,
     pub references: Vec<Reference>,
+    pub file_meta: std::collections::HashMap<String, FileMeta>,
 }
 
 impl Index {
@@ -123,6 +133,10 @@ pub fn build_index(root: &Path) -> Result<Index> {
             .unwrap_or(&f.path)
             .to_string_lossy()
             .into_owned();
+        idx.file_meta.insert(
+            rel.clone(),
+            FileMeta { len: source.len() as u64 },
+        );
         if let Some(q) = f.language.query_source(QueryKind::Defs) {
             index_defs(&mut idx, &source, &rel, f.language, q)?;
         }
