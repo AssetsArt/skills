@@ -13,6 +13,7 @@
 | Skill | What it does | Crate |
 | --- | --- | --- |
 | [ny-codemap](./skills/ny-codemap) | Survey a codebase: list files, show symbols, find definitions | `crates/codemap` |
+| [ny-codegraph](./skills/ny-codegraph) | Semantic cross-references: find-refs, callers, callees, impact | `crates/codegraph` |
 
 ## Install (end users)
 
