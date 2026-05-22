@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Codebase exploration: prefer the local skills over ad-hoc `grep`/`find`/`ls`
 
-This repo ships two CLI skills designed for exactly the queries an agent runs while orienting in a project. **Default to them** before reaching for `grep`/`rg`/`find`/`ls`/`tree`/`fd`. They return structured results (file + line + symbol kind + confidence), which is faster to reason about and cheaper to feed back into prompts than text matches.
+This repo ships three CLI skills: **`codemap`** + **`codegraph`** for read-only orientation, and **`astedit`** for write-side rewrites. The exploration table below covers the read-only pair; see "Write-side rewrites" further down for `astedit`.
+
+**Default to the read-only pair** before reaching for `grep`/`rg`/`find`/`ls`/`tree`/`fd`. They return structured results (file + line + symbol kind + confidence), which is faster to reason about and cheaper to feed back into prompts than text matches.
 
 | Question | Use | Not |
 | --- | --- | --- |
@@ -20,7 +22,24 @@ When to bypass and reach for `grep`/`rg` anyway:
 - Searching in a language the skills don't support (current set: Rust, TypeScript, TSX, JavaScript, Python).
 - Counting raw occurrences of a substring, not call/reference relationships.
 
-Both skills always accept `--json`; assert `result.schema_version === 1` and read `result.data`. The pre-built binaries live at `./skills/ny-codemap/scripts/codemap` and `./skills/ny-codegraph/scripts/codegraph` in this repo; from agent contexts elsewhere they install to `~/.claude/skills/ny-<name>/scripts/<name>`. If a binary is missing, run `./scripts/build-skills.sh` (local) or `./scripts/install.sh` (release tarball).
+All three skills accept `--json`; assert `result.schema_version === 1` and read `result.data`. The pre-built binaries live at `./skills/ny-codemap/scripts/codemap`, `./skills/ny-codegraph/scripts/codegraph`, and `./skills/ny-astedit/scripts/astedit` in this repo; from agent contexts elsewhere they install to `~/.claude/skills/ny-<name>/scripts/<name>`. If a binary is missing, run `./scripts/build-skills.sh` (local) or `./scripts/install.sh` (release tarball).
+
+## Write-side rewrites: use `astedit` instead of `sed` / chained `Edit` calls
+
+`astedit` is the write-side companion to `codegraph`. Default to it before running multi-file `sed -i`, hand-rolled ast-grep CLI, or chained `Edit` calls that touch the same identifier or AST shape across files. Dry-run by default; `--apply` opts into atomic per-file writes.
+
+| Question | Use | Not |
+| --- | --- | --- |
+| "Rename X to Y across the project" | `astedit rename X Y --json --path .` (inspect dry-run) → re-run with `--apply` | `sed -i s/X/Y/g`, `rg -l X \| xargs sed`, chained `Edit` calls |
+| "Rewrite every `print(...)` call to `log.info(...)`" (structural pattern) | `astedit rewrite --pattern 'print($A)' --rewrite 'log.info($A)' --json --path .` → `--apply` | hand-rolled `ast-grep` CLI, `sed` on AST-shaped patterns |
+| "Rename collides with multiple definitions" | `astedit rename X Y --json` → reads `needs_anchor: true` → re-run with `--anchor FILE:LINE` | guessing which `X` the user means |
+
+Safety properties (preserve if you touch the pipeline):
+- **Dry-run default, `--apply` opt-in.** No file writes without `--apply`.
+- **Atomic per-file writes.** Temp file in the same directory + `rename(2)`. No partial writes on crash.
+- **Length-based drift detection.** Pre-flight stats compare against the index snapshot; mismatch falls back to SHA-256. Persistent mismatch ⇒ `error_kind: "hash-mismatch"`, skip the file.
+- **Race-window guard.** Re-stat length immediately before each `rename(2)`. Mismatch ⇒ `error_kind: "concurrent-write"`, skip.
+- **JSON envelope is spec-locked.** `error_kind` is a closed enum of six kebab-case strings; the rewrite path also requires `confidence`/`reason` to be **omitted** from `applied[].edits[]` (structural matches are AST-shape exact ⇒ implicit `high`).
 
 ## Project shape
 
@@ -76,6 +95,25 @@ The `crates/codemap` binary is the reference layout new skills should mirror:
 - `src/walk.rs` uses the `ignore` crate to respect `.gitignore` during traversal. Reuse it rather than rolling new directory walks.
 
 Integration tests under `crates/codemap/tests/` operate on `tests/fixtures/sample_project/`. When you add a new language or symbol kind, extend the fixture and add cases to the relevant `*_test.rs` rather than creating ad-hoc temp dirs.
+
+## Architecture notes for `astedit`
+
+`crates/astedit` is the only **bin + lib** crate in the workspace. The `[lib]` exists so integration tests can call `astedit::apply::check_drift` directly (drift races are hard to reproduce through the CLI without a debug back-door). Layout:
+
+- `src/main.rs` — thin dispatcher; `Cli::parse()` → match on `Command::{Rename, Rewrite}` → delegate to `commands::<sub>::run`.
+- `src/cli.rs` — clap structs (`Cli`, `Command`, `RenameArgs`, `RewriteArgs`). Both subcommands share `--path`, `--apply`, `--json`, `--lang`.
+- `src/commands/{rename,rewrite}.rs` — pipeline orchestration only. `rename` builds a `codegraph_core::Index`, resolves references, splices bytes. `rewrite` skips the index entirely — walks via `codegraph_core::walk::walk_sources`, compiles ast-grep `Pattern` + `TemplateFix` per language, applies edits.
+- `src/rewrite.rs` — the **single import site** for `ast_grep_core::*` and `ast_grep_language::*`. `rewrite_file(source, pattern, rewrite, lang) -> Result<Vec<RewriteSite>, AstEditError>` is the only API surface; `commands/rewrite.rs` calls it and never touches ast-grep types directly.
+- `src/apply.rs` — atomic writes + drift detection. `write_atomic`, `check_drift`, `current_len` are shared between `rename` and `rewrite`. **Do not bypass these helpers** with `std::fs::write` — atomicity + the race-window guard are load-bearing.
+- `src/error.rs` — `AstEditError` enum with six variants serialized via `kind() -> &'static str` to spec-locked kebab-case strings: `parse-error`, `hash-mismatch`, `concurrent-write`, `node-kind-mismatch`, `write-failed`, `pattern-compile`. **The set is closed** — extending it is a spec-level change; route new failure modes into the closest existing variant.
+- `src/serialize.rs` — parallel envelope structs: `RenameData`/`AppliedFile`/`AppliedEdit` (carries `confidence` + `reason`) vs. `RewriteData`/`RewriteAppliedFile`/`RewriteEdit` (omits both — structural matches are AST-shape exact). The split is deliberate; do NOT merge them into a generic envelope.
+- `src/output.rs` — re-uses the same `{schema_version: 1, data: ...}` wrapper as codemap/codegraph.
+
+The **rewrite pipeline is two-pass on purpose** (`commands/rewrite.rs::run`): pass 1 compiles `(pattern, rewrite)` for every language present in the walk; if ANY language fails to compile, the run aborts before any file is read or written. Pass 2 only runs when pass 1 was clean. This matches the spec's "Compilation failure on any selected language ⇒ exit non-zero" wording strictly. Don't collapse into a single pass — files processed before a compile failure would otherwise be applied.
+
+Integration tests under `crates/astedit/tests/` use the shared `tests/common/mod.rs` helper (`copy_fixture`, `run_astedit_json`). Each fixture lives in `tests/fixtures/<name>/`; reuse fixtures across tests when the source content is the same (Task 14's pattern-compile test reuses Task 5's `rewrite_rust/` fixture).
+
+Workspace constraint: `ast-grep-core 0.38.7` requires `tree-sitter ^0.25.4`. `codegraph-core` and `codemap` both bumped to the `tree-sitter 0.25` family for this — Cargo's `links = "tree-sitter"` is workspace-wide, not per-graph, so sibling crates can't straddle versions even when their dependency graphs don't overlap directly.
 
 ## Architecture notes for `codegraph`
 
