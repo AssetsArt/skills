@@ -288,3 +288,77 @@ fn rewrite_no_match_exits_zero_with_empty_applied() {
         data["errors"]
     );
 }
+
+#[test]
+fn rewrite_lang_filter_unset_walks_all_languages() {
+    let tmp = copy_fixture("rewrite_lang_filter");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "doit()",
+        "--rewrite",
+        "done()",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0, "universal pattern compiles in both langs: data={data}");
+    assert!(
+        data["errors"].as_array().unwrap().is_empty(),
+        "errors: {:?}",
+        data["errors"]
+    );
+
+    let applied = data["applied"].as_array().unwrap();
+    let rs_present = applied
+        .iter()
+        .any(|f| f["file"].as_str().unwrap().ends_with("main.rs"));
+    let py_present = applied
+        .iter()
+        .any(|f| f["file"].as_str().unwrap().ends_with("main.py"));
+    assert!(rs_present, "main.rs missing from applied: {applied:?}");
+    assert!(py_present, "main.py missing from applied: {applied:?}");
+}
+
+#[test]
+fn rewrite_lang_rust_skips_non_rust_files_entirely() {
+    let tmp = copy_fixture("rewrite_lang_filter");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "doit()",
+        "--rewrite",
+        "done()",
+        "--path",
+        path,
+        "--lang",
+        "rust",
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(
+        data["errors"].as_array().unwrap().is_empty(),
+        "errors should be empty — python file was filtered out, not processed: {:?}",
+        data["errors"]
+    );
+
+    let applied = data["applied"].as_array().unwrap();
+    let files: Vec<&str> = applied
+        .iter()
+        .map(|f| f["file"].as_str().unwrap())
+        .collect();
+    assert!(
+        files.iter().any(|f| f.ends_with("main.rs")),
+        "rust file should be applied: {files:?}"
+    );
+    assert!(
+        !files.iter().any(|f| f.ends_with("main.py")),
+        "python file must not appear when --lang rust filters it out: {files:?}"
+    );
+}
