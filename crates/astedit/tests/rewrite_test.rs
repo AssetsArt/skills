@@ -70,3 +70,115 @@ fn rewrite_rust_two_matches_dry_run_default() {
         "dry-run wrote eprintln! into the fixture"
     );
 }
+
+#[test]
+fn rewrite_typescript_matches() {
+    let tmp = copy_fixture("rewrite_typescript");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "console.log($A)",
+        "--rewrite",
+        "console.error($A)",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(
+        data["errors"].as_array().unwrap().is_empty(),
+        "errors: {:?}",
+        data["errors"]
+    );
+
+    let applied = data["applied"].as_array().expect("applied array");
+    assert_eq!(applied.len(), 1);
+    assert!(applied[0]["file"].as_str().unwrap().ends_with("main.ts"));
+
+    let edits = applied[0]["edits"].as_array().unwrap();
+    assert_eq!(edits.len(), 2, "two console.log calls expected");
+    for e in edits {
+        assert!(e["old"].as_str().unwrap().starts_with("console.log"));
+        assert!(e["new"].as_str().unwrap().starts_with("console.error"));
+    }
+}
+
+#[test]
+fn rewrite_tsx_matches_jsx_file() {
+    let tmp = copy_fixture("rewrite_tsx");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "console.log($A)",
+        "--rewrite",
+        "console.error($A)",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(
+        data["errors"].as_array().unwrap().is_empty(),
+        "errors: {:?}",
+        data["errors"]
+    );
+    let applied = data["applied"].as_array().expect("applied array");
+    assert_eq!(applied.len(), 1, "exactly one .tsx file expected");
+    assert!(applied[0]["file"].as_str().unwrap().ends_with("main.tsx"));
+    assert_eq!(applied[0]["edits"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn rewrite_javascript_matches() {
+    let tmp = copy_fixture("rewrite_javascript");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "console.log($A)",
+        "--rewrite",
+        "console.error($A)",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    let applied = data["applied"].as_array().expect("applied array");
+    assert_eq!(applied.len(), 1);
+    assert!(applied[0]["file"].as_str().unwrap().ends_with("main.js"));
+    assert_eq!(applied[0]["edits"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn rewrite_python_matches() {
+    let tmp = copy_fixture("rewrite_python");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "print($A)",
+        "--rewrite",
+        "logging.info($A)",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    let applied = data["applied"].as_array().expect("applied array");
+    assert_eq!(applied.len(), 1);
+    assert!(applied[0]["file"].as_str().unwrap().ends_with("main.py"));
+    assert_eq!(applied[0]["edits"].as_array().unwrap().len(), 2);
+    for e in applied[0]["edits"].as_array().unwrap() {
+        assert!(e["new"].as_str().unwrap().starts_with("logging.info"));
+    }
+}
