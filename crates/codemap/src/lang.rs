@@ -33,11 +33,11 @@ impl Language {
 
     pub fn ts_language(self) -> TsLanguage {
         match self {
-            Language::Rust => tree_sitter_rust::language(),
-            Language::TypeScript => tree_sitter_typescript::language_typescript(),
-            Language::Tsx => tree_sitter_typescript::language_tsx(),
-            Language::JavaScript => tree_sitter_javascript::language(),
-            Language::Python => tree_sitter_python::language(),
+            Language::Rust => tree_sitter_rust::LANGUAGE.into(),
+            Language::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Language::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Language::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+            Language::Python => tree_sitter_python::LANGUAGE.into(),
         }
     }
 
