@@ -81,8 +81,8 @@ where
         let pos = m.start_pos();
         let (row, byte_col) = pos.byte_point();
         let new_bytes = <TemplateFix as Replacer<StrDoc<L>>>::generate_replacement(&fixer, &m);
-        let new_text = String::from_utf8(new_bytes).map_err(|e| AstEditError::PatternCompile {
-            lang: lang_name.to_string(),
+        let new_text = String::from_utf8(new_bytes).map_err(|e| AstEditError::ParseError {
+            file: lang_name.to_string(),
             message: format!("rewrite produced non-utf8 bytes: {e}"),
         })?;
         out.push(RewriteSite {
@@ -90,8 +90,8 @@ where
             end_byte: range.end,
             // ast-grep yields zero-based row/col; the JSON envelope is
             // documented as 1-based, so bump both here.
-            line: row + 1,
-            col: byte_col + 1,
+            line: row.saturating_add(1),
+            col: byte_col.saturating_add(1),
             old: m.text().into_owned(),
             new: new_text,
         });
