@@ -362,3 +362,38 @@ fn rewrite_lang_rust_skips_non_rust_files_entirely() {
         "python file must not appear when --lang rust filters it out: {files:?}"
     );
 }
+
+#[test]
+fn rewrite_pattern_compile_failure_exits_nonzero_with_error_kind() {
+    let tmp = copy_fixture("rewrite_rust");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "(((",
+        "--rewrite",
+        "eprintln!($A)",
+        "--path",
+        path,
+        "--lang",
+        "rust",
+        "--json",
+    ]);
+
+    assert_ne!(code, 0, "pattern-compile failure must exit non-zero; data was: {data}");
+    assert_eq!(data["subcommand"], "rewrite");
+
+    let errors = data["errors"].as_array().expect("errors array");
+    let pattern_errs: Vec<&serde_json::Value> = errors
+        .iter()
+        .filter(|e| e["error_kind"] == "pattern-compile")
+        .collect();
+    assert!(
+        !pattern_errs.is_empty(),
+        "expected at least one pattern-compile error; errors = {errors:?}"
+    );
+
+    let err = pattern_errs[0];
+    assert_eq!(err["lang"], "rust");
+}

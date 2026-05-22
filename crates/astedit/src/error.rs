@@ -7,7 +7,6 @@ use thiserror::Error;
 /// JSON shape lives in `crate::serialize`, which builds it explicitly so
 /// the wire schema cannot drift from variant renaming.
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum AstEditError {
     #[error("parse error in {file}: {message}")]
     ParseError { file: String, message: String },
