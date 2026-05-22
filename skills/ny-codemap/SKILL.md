@@ -44,8 +44,11 @@ Then download, verify, and install:
 ```bash
 BIN=codemap
 SLUG=<slug from table above>
-TAG=$(curl -fsSL https://api.github.com/repos/AssetsArt/skills/releases/latest \
-        | grep -oE '"tag_name": *"[^"]+"' | cut -d'"' -f4)
+# Latest tag is resolved from the GitHub releases redirect — open
+# https://github.com/AssetsArt/skills/releases/latest in a browser to inspect
+# the current tag and asset list manually.
+TAG=$(basename "$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+        https://github.com/AssetsArt/skills/releases/latest)")
 BASE="https://github.com/AssetsArt/skills/releases/download/$TAG"
 
 curl -fsSLO "$BASE/$BIN-$TAG-$SLUG.tar.gz"
