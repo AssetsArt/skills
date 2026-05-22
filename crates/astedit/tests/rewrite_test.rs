@@ -257,3 +257,34 @@ fn rewrite_multimatch_metavar_preserves_argument_list() {
         "expected single-arg capture preserved; news = {news:?}"
     );
 }
+
+#[test]
+fn rewrite_no_match_exits_zero_with_empty_applied() {
+    let tmp = copy_fixture("rewrite_no_match");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "println!($A)",
+        "--rewrite",
+        "eprintln!($A)",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0, "no-match scenario must exit 0; data was: {data}");
+    assert_eq!(data["subcommand"], "rewrite");
+    assert_eq!(data["dry_run"], true);
+    assert!(
+        data["applied"].as_array().unwrap().is_empty(),
+        "applied must be empty when no matches; got: {:?}",
+        data["applied"]
+    );
+    assert!(
+        data["errors"].as_array().unwrap().is_empty(),
+        "errors must be empty when no matches; got: {:?}",
+        data["errors"]
+    );
+}
