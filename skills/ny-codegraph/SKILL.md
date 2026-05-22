@@ -31,40 +31,19 @@ The skill ships a pre-built binary:
 
 ### If the binary is missing — download from Releases
 
-Releases live at <https://github.com/AssetsArt/skills/releases>. Each binary is published as `<bin>-<tag>-<slug>.tar.gz` paired with a `<bin>-<tag>-<slug>.sha256`. For this skill, `<bin>` is `codegraph`.
-
-Detect your machine first:
+Pick `<SLUG>` from `uname -sm`: `Darwin arm64`→`macos-aarch64`; `Darwin x86_64`→`macos-x86_64`; `Linux x86_64`→`linux-gnu-x86_64` (musl: `linux-musl-x86_64`); `Linux aarch64`→`linux-gnu-aarch64` (musl: `linux-musl-aarch64`).
 
 ```bash
-uname -sm
-# Maps to <slug>:
-#   "Darwin arm64"   → macos-aarch64       (Apple Silicon M1/M2/M3/M4)
-#   "Darwin x86_64"  → macos-x86_64        (Intel Mac)
-#   "Linux x86_64"   → linux-gnu-x86_64    (use linux-musl-x86_64 for static / Alpine)
-#   "Linux aarch64"  → linux-gnu-aarch64   (use linux-musl-aarch64 for static / Alpine)
-```
-
-Then download, verify, and install:
-
-```bash
-BIN=codegraph
-SLUG=<slug from table above>
-# Latest tag is resolved from the GitHub releases redirect — open
-# https://github.com/AssetsArt/skills/releases/latest in a browser to inspect
-# the current tag and asset list manually.
+BIN=codegraph; SLUG=<slug>
 TAG=$(basename "$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
         https://github.com/AssetsArt/skills/releases/latest)")
 BASE="https://github.com/AssetsArt/skills/releases/download/$TAG"
-
 curl -fsSLO "$BASE/$BIN-$TAG-$SLUG.tar.gz"
 curl -fsSLO "$BASE/$BIN-$TAG-$SLUG.sha256"
-# macOS: shasum -a 256 -c "$BIN-$TAG-$SLUG.sha256"
-# Linux: sha256sum -c "$BIN-$TAG-$SLUG.sha256"
+shasum -a 256 -c "$BIN-$TAG-$SLUG.sha256"   # Linux: sha256sum -c
 tar -xzf "$BIN-$TAG-$SLUG.tar.gz"
 mkdir -p scripts && mv "$BIN" "scripts/$BIN" && chmod +x "scripts/$BIN"
 ```
-
-Drop the binary anywhere on your `$PATH` if you prefer global install.
 
 ## Subcommands
 
