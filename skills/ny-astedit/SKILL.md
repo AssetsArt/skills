@@ -23,7 +23,39 @@ The skill ships a pre-built binary:
 ./scripts/astedit rename <OLD> <NEW> [flags]
 ```
 
-If missing, run `./scripts/install.sh` (downloads from Releases) or `./scripts/build-skills.sh` (local cargo build) from the `skills` repo root.
+### If the binary is missing — download from Releases
+
+Releases live at <https://github.com/AssetsArt/skills/releases>. Each binary is published as `<bin>-<tag>-<slug>.tar.gz` paired with a `<bin>-<tag>-<slug>.sha256`. For this skill, `<bin>` is `astedit`.
+
+Detect your machine first:
+
+```bash
+uname -sm
+# Maps to <slug>:
+#   "Darwin arm64"   → macos-aarch64       (Apple Silicon M1/M2/M3/M4)
+#   "Darwin x86_64"  → macos-x86_64        (Intel Mac)
+#   "Linux x86_64"   → linux-gnu-x86_64    (use linux-musl-x86_64 for static / Alpine)
+#   "Linux aarch64"  → linux-gnu-aarch64   (use linux-musl-aarch64 for static / Alpine)
+```
+
+Then download, verify, and install:
+
+```bash
+BIN=astedit
+SLUG=<slug from table above>
+TAG=$(curl -fsSL https://api.github.com/repos/AssetsArt/skills/releases/latest \
+        | grep -oE '"tag_name": *"[^"]+"' | cut -d'"' -f4)
+BASE="https://github.com/AssetsArt/skills/releases/download/$TAG"
+
+curl -fsSLO "$BASE/$BIN-$TAG-$SLUG.tar.gz"
+curl -fsSLO "$BASE/$BIN-$TAG-$SLUG.sha256"
+# macOS: shasum -a 256 -c "$BIN-$TAG-$SLUG.sha256"
+# Linux: sha256sum -c "$BIN-$TAG-$SLUG.sha256"
+tar -xzf "$BIN-$TAG-$SLUG.tar.gz"
+mkdir -p scripts && mv "$BIN" "scripts/$BIN" && chmod +x "scripts/$BIN"
+```
+
+Drop the binary anywhere on your `$PATH` if you prefer global install.
 
 ## Subcommand: `rename`
 
