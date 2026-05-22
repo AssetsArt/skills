@@ -58,10 +58,9 @@ pub fn run(args: RewriteArgs) -> anyhow::Result<i32> {
             let source_text = match std::fs::read_to_string(&src.path) {
                 Ok(s) => s,
                 Err(e) => {
-                    errors.push(ErrorEntry::from(&AstEditError::WriteFailed {
+                    errors.push(ErrorEntry::from(&AstEditError::ParseError {
                         file: rel.clone(),
-                        os_code: e.raw_os_error(),
-                        message: e.to_string(),
+                        message: format!("read failed: {e}"),
                     }));
                     continue;
                 }
