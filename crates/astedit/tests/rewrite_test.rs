@@ -305,7 +305,10 @@ fn rewrite_lang_filter_unset_walks_all_languages() {
         "--json",
     ]);
 
-    assert_eq!(code, 0, "universal pattern compiles in both langs: data={data}");
+    assert_eq!(
+        code, 0,
+        "universal pattern compiles in both langs: data={data}"
+    );
     assert!(
         data["errors"].as_array().unwrap().is_empty(),
         "errors: {:?}",
@@ -381,7 +384,10 @@ fn rewrite_pattern_compile_failure_exits_nonzero_with_error_kind() {
         "--json",
     ]);
 
-    assert_ne!(code, 0, "pattern-compile failure must exit non-zero; data was: {data}");
+    assert_ne!(
+        code, 0,
+        "pattern-compile failure must exit non-zero; data was: {data}"
+    );
     assert_eq!(data["subcommand"], "rewrite");
 
     let errors = data["errors"].as_array().expect("errors array");
@@ -396,4 +402,58 @@ fn rewrite_pattern_compile_failure_exits_nonzero_with_error_kind() {
 
     let err = pattern_errs[0];
     assert_eq!(err["lang"], "rust");
+}
+
+#[test]
+fn rewrite_apply_writes_changes_to_disk() {
+    let tmp = copy_fixture("rewrite_apply");
+    let path = tmp.path().to_str().unwrap();
+    let target = tmp.path().join("main.rs");
+    let before = std::fs::read_to_string(&target).unwrap();
+    assert!(before.contains("println!"));
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "println!($A)",
+        "--rewrite",
+        "eprintln!($A)",
+        "--path",
+        path,
+        "--apply",
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert_eq!(data["dry_run"], false);
+    assert!(
+        data["errors"].as_array().unwrap().is_empty(),
+        "no errors expected; got: {:?}",
+        data["errors"]
+    );
+
+    let after = std::fs::read_to_string(&target).unwrap();
+    assert_ne!(
+        before, after,
+        "file should have been modified by --apply: before={before}; after={after}"
+    );
+    assert!(
+        after.contains("eprintln!(\"a\")"),
+        "first eprintln should be present: {after}"
+    );
+    assert!(
+        after.contains("eprintln!(\"bb\")"),
+        "second eprintln should be present: {after}"
+    );
+
+    let applied = data["applied"].as_array().unwrap();
+    let entry = applied
+        .iter()
+        .find(|f| f["file"].as_str().unwrap().ends_with("main.rs"))
+        .unwrap();
+    let bytes_changed = entry["bytes_changed"].as_i64().unwrap();
+    assert_eq!(
+        bytes_changed, 2,
+        "expected +2 bytes total; got {bytes_changed}"
+    );
 }
