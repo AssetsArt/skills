@@ -182,3 +182,36 @@ fn rewrite_python_matches() {
         assert!(e["new"].as_str().unwrap().starts_with("logging.info"));
     }
 }
+
+#[test]
+fn rewrite_single_metavar_substituted_in_replacement() {
+    let tmp = copy_fixture("rewrite_metavar");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "String::from($S)",
+        "--rewrite",
+        "String::from($S.to_owned())",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    let applied = data["applied"].as_array().unwrap();
+    assert_eq!(applied.len(), 1);
+    let edits = applied[0]["edits"].as_array().unwrap();
+    assert_eq!(edits.len(), 2);
+
+    let news: Vec<&str> = edits.iter().map(|e| e["new"].as_str().unwrap()).collect();
+    assert!(
+        news.iter().any(|n| n.contains("\"alice\".to_owned()")),
+        "expected `alice` capture materialised in rewrite; news = {news:?}",
+    );
+    assert!(
+        news.iter().any(|n| n.contains("\"bob\".to_owned()")),
+        "expected `bob` capture materialised in rewrite; news = {news:?}",
+    );
+}
