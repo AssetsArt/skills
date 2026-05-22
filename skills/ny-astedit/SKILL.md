@@ -66,7 +66,7 @@ If `--pattern` or `--rewrite` fails to compile for any language scanned, astedit
 
 ## JSON envelope
 
-`--json` emits exactly this shape (every field documented in the spec at `docs/superpowers/specs/2026-05-21-astedit-design.md`):
+`--json` emits exactly this shape:
 
 ```json
 {
