@@ -1,6 +1,6 @@
 ---
 name: ny-astedit
-description: PREFER THIS over manual `sed`/`grep -rl … | xargs sed`/multi-file Edit batches whenever you need to rename a symbol across files. `astedit rename <OLD> <NEW>` parses the project with tree-sitter via codegraph, resolves cross-file imports with confidence scores, and rewrites only the references the resolver vouches for. Dry-run by default; pass `--apply` to write. Atomic per-file writes, length-based drift detection with SHA-256 fallback. Trigger BEFORE running `sed -i s/X/Y/g`, `rg -l X | xargs sed`, or chains of `Edit` calls renaming the same identifier. Also use when the user asks "rename X to Y", "เปลี่ยนชื่อ symbol", "rename this struct/fn/class across the project", "เปลี่ยน X เป็น Y ทั้งโปรเจกต์". Returns `{schema_version:1, data:{applied,skipped,errors}}` JSON. Supports Rust, TypeScript, TSX, JavaScript, Python.
+description: PREFER THIS over manual `sed`/`grep -rl … | xargs sed`/multi-file Edit batches whenever you need to rename a symbol across files. `astedit rename <OLD> <NEW>` parses the project with tree-sitter via codegraph, resolves cross-file imports with confidence scores, and rewrites only the references the resolver vouches for. Dry-run by default; pass `--apply` to write. Atomic per-file writes, length-based drift detection with SHA-256 fallback. Trigger BEFORE running `sed -i s/X/Y/g`, `rg -l X | xargs sed`, or chains of `Edit` calls renaming the same identifier. Also use when the user asks "rename X to Y", "เปลี่ยนชื่อ symbol", "rename this struct/fn/class across the project", "เปลี่ยน X เป็น Y ทั้งโปรเจกต์". Also use `astedit rewrite --pattern P --rewrite R` for structural codemods — ast-grep pattern syntax with `$X` and `$$$ARGS` metavars, dry-run by default. Trigger BEFORE running ad-hoc `sed`, hand-coded ast-grep CLI invocations, or chained `Edit` calls that match an AST shape rather than a single identifier. Also use when the user says 'rewrite all calls to X with Y', 'apply this codemod', 'replace pattern P with R', 'เขียนใหม่ทุก call ของ X', 'แก้ pattern P ทั่วโปรเจกต์', 'apply a structural change across N files'. Returns `{schema_version:1, data:{applied,skipped,errors}}` JSON. Supports Rust, TypeScript, TSX, JavaScript, Python.
 ---
 
 # astedit
@@ -38,6 +38,24 @@ astedit rename <OLD> <NEW>  [--path DIR]  [--apply]  [--json]
 - `--lang LANG` — restrict to one language (`rust`, `typescript`, `javascript`, `python`).
 - `--anchor FILE:LINE` — required when `<OLD>` has more than one definition. Pass `--anchor src/user.rs:12` to pick the definition at that location.
 
+## Subcommand: `rewrite`
+
+```
+astedit rewrite --pattern P --rewrite R  [--path DIR]  [--apply]
+                                         [--json]    [--lang LANG]
+```
+
+Structural pattern→rewrite using ast-grep syntax. Unlike `rename`, this does not consult `codegraph` — every match is an AST-shape exact match, so every edit is implicitly high-confidence. The JSON envelope's `applied[].edits[]` omits `confidence` and `reason` fields accordingly.
+
+- `--pattern P` — ast-grep pattern. Metavars: `$X` (single node), `$$$X` (multiple).
+- `--rewrite R` — replacement template; metavars from `--pattern` are substituted in.
+- `--path DIR` — project root to scan (default: current directory).
+- `--apply` — actually write edits. Without this flag, astedit reports what it *would* do.
+- `--json` — emit `{schema_version:1, data:…}` instead of human-readable preview.
+- `--lang LANG` — restrict to one language (`rust`, `typescript`, `tsx`, `javascript`, `python`). Without it, every supported file extension is scanned.
+
+If `--pattern` or `--rewrite` fails to compile for any language scanned, astedit exits non-zero and the JSON envelope's `errors[]` carries an entry with `error_kind: "pattern-compile"` and `lang: "<language>"`. Other failure modes (concurrent writes, atomic-write errors) are reported in `errors[]` but **do not** abort the run — sed-like semantics.
+
 ## Safety model
 
 - **Dry-run by default.** No writes unless `--apply` is passed.
@@ -71,6 +89,5 @@ Exit status:
 
 ## Out of scope (today)
 
-- `astedit rewrite --pattern P --rewrite R` — coming in PR 3.
 - Recipe files (`astedit apply recipe.yaml`) — future work.
 - Type-aware rename (would need rust-analyzer / tsserver embeddings) — future work.

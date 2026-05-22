@@ -128,7 +128,7 @@ use crate::walk::walk_sources;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 impl DefKind {
     fn from_capture_suffix(s: &str) -> Option<Self> {
@@ -206,7 +206,8 @@ fn index_defs(
     let names = query.capture_names();
     let bytes = source.as_bytes();
     let mut cursor = QueryCursor::new();
-    for m in cursor.matches(&query, tree.root_node(), bytes) {
+    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = matches.next() {
         let mut def_node = None;
         let mut def_kind = None;
         let mut name = None;
@@ -262,7 +263,8 @@ fn index_imports(
         std::collections::HashSet::new();
     {
         let mut cursor = QueryCursor::new();
-        for m in cursor.matches(&query, tree.root_node(), bytes) {
+        let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+        while let Some(m) = matches.next() {
             for cap in m.captures {
                 let cname = names[cap.index as usize];
                 if cname == "reexport_alias" || cname == "reexport_wildcard" {
@@ -281,7 +283,8 @@ fn index_imports(
     );
 
     let mut cursor = QueryCursor::new();
-    for m in cursor.matches(&query, tree.root_node(), bytes) {
+    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = matches.next() {
         let mut path_text: Option<String> = None;
         let mut single_name: Option<String> = None;
         let mut alias: Option<String> = None;
@@ -494,7 +497,8 @@ fn index_refs(
     // Dedupe key: (byte_offset, name). Calls and Reference captures often overlap at the same byte.
     let mut seen: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
 
-    for m in cursor.matches(&query, tree.root_node(), bytes) {
+    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = matches.next() {
         let mut name_node: Option<tree_sitter::Node<'_>> = None;
         let mut ref_kind: Option<RefKind> = None;
         for cap in m.captures {

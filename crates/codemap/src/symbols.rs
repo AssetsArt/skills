@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
-use tree_sitter::{Parser, Query, QueryCursor};
+use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -71,7 +71,8 @@ pub fn extract_file(path: &Path, rel_path: &str, language: Language) -> Result<V
     let mut cursor = QueryCursor::new();
     let mut out = Vec::new();
     let bytes = source.as_bytes();
-    for m in cursor.matches(&query, tree.root_node(), bytes) {
+    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = matches.next() {
         let mut symbol_node = None;
         let mut symbol_kind = None;
         let mut name = None;
