@@ -215,3 +215,45 @@ fn rewrite_single_metavar_substituted_in_replacement() {
         "expected `bob` capture materialised in rewrite; news = {news:?}",
     );
 }
+
+#[test]
+fn rewrite_multimatch_metavar_preserves_argument_list() {
+    let tmp = copy_fixture("rewrite_multimatch");
+    let path = tmp.path().to_str().unwrap();
+
+    let (code, data) = run_astedit_json(&[
+        "rewrite",
+        "--pattern",
+        "log($$$ARGS)",
+        "--rewrite",
+        "tracing::info!($$$ARGS)",
+        "--path",
+        path,
+        "--json",
+    ]);
+
+    assert_eq!(code, 0);
+    let applied = data["applied"].as_array().unwrap();
+    assert_eq!(
+        applied.len(),
+        1,
+        "single-file fixture expected; got: {applied:?}"
+    );
+
+    let edits = applied[0]["edits"].as_array().unwrap();
+    assert_eq!(
+        edits.len(),
+        2,
+        "expected 2 call-site matches; edits={edits:?}"
+    );
+
+    let news: Vec<&str> = edits.iter().map(|e| e["new"].as_str().unwrap()).collect();
+    assert!(
+        news.iter().any(|n| n.contains("\"a\", 1, true")),
+        "expected 3-arg capture preserved; news = {news:?}"
+    );
+    assert!(
+        news.iter().any(|n| n.contains("(\"b\")")),
+        "expected single-arg capture preserved; news = {news:?}"
+    );
+}
