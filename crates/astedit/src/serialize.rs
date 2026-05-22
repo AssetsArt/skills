@@ -250,8 +250,14 @@ mod tests {
         assert_eq!(v["end_byte"], 108);
         assert_eq!(v["old"], "console.log");
         assert_eq!(v["new"], "console.error");
-        assert!(v.get("confidence").is_none(), "rewrite edit must not carry confidence: {v:?}");
-        assert!(v.get("reason").is_none(),     "rewrite edit must not carry reason: {v:?}");
+        assert!(
+            v.get("confidence").is_none(),
+            "rewrite edit must not carry confidence: {v:?}"
+        );
+        assert!(
+            v.get("reason").is_none(),
+            "rewrite edit must not carry reason: {v:?}"
+        );
     }
 
     #[test]
@@ -260,8 +266,10 @@ mod tests {
             file: "src/lib.rs".into(),
             bytes_changed: 12,
             edits: vec![RewriteEdit {
-                line: 1, col: 0,
-                start_byte: 0, end_byte: 4,
+                line: 1,
+                col: 0,
+                start_byte: 0,
+                end_byte: 4,
                 old: "User".into(),
                 new: "Account".into(),
             }],
