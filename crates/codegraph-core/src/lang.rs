@@ -1,6 +1,6 @@
 use tree_sitter::Language as TsLanguage;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     Rust,
     TypeScript,

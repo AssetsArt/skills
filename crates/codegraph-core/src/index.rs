@@ -126,9 +126,14 @@ impl Index {
 use crate::lang::{Language, QueryKind};
 use crate::walk::walk_sources;
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use std::fs;
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+
+/// Compiled queries for every language present in a walk, shared by reference
+/// across the parallel indexing pass.
+type QueryCache = std::collections::HashMap<Language, LangQueries>;
 
 impl DefKind {
     fn from_capture_suffix(s: &str) -> Option<Self> {
@@ -147,43 +152,146 @@ impl DefKind {
     }
 }
 
-pub fn build_index(root: &Path) -> Result<Index> {
-    let mut idx = Index::default();
-    for f in walk_sources(root)? {
-        let source = match fs::read_to_string(&f.path) {
-            Ok(s) => s,
-            Err(_) => continue, // unreadable file — skip silently
+/// The three compiled tree-sitter queries for one language, plus the grammar
+/// handle used to (re)configure the parser.
+///
+/// Compiling a tree-sitter `Query` from its `.scm` source is the dominant cost
+/// of indexing — on a ~3.7k-file TS repo it was ~12ms per file and was being
+/// paid once *per file* (defs+imports+refs ≈ 11k compilations). Compiling each
+/// query once per language and reusing it across every file of that language
+/// turns that O(files) cost into O(languages).
+struct LangQueries {
+    ts: tree_sitter::Language,
+    defs: Option<Query>,
+    imports: Option<Query>,
+    refs: Option<Query>,
+}
+
+impl LangQueries {
+    fn compile(lang: Language) -> Result<Self> {
+        let ts = lang.ts_language();
+        // Defs is load-bearing — a compile failure here is a hard error, matching
+        // the previous per-file behaviour where the defs query used `?`.
+        let defs = match lang.query_source(QueryKind::Defs) {
+            Some(src) => Some(
+                Query::new(&ts, src)
+                    .with_context(|| format!("compile defs query for {}", lang.name()))?,
+            ),
+            None => None,
         };
-        let rel = f
-            .path
-            .strip_prefix(root)
-            .unwrap_or(&f.path)
-            .to_string_lossy()
-            .into_owned();
-        idx.file_meta.insert(
-            rel.clone(),
-            FileMeta {
-                len: source.len() as u64,
-            },
-        );
-        if let Some(q) = f.language.query_source(QueryKind::Defs) {
-            index_defs(&mut idx, &source, &rel, f.language, q)?;
+        // Imports/refs are best-effort: node kinds drift across tree-sitter
+        // releases, so a compile failure downgrades to "skip this query for this
+        // language" rather than aborting the whole index.
+        let imports =
+            lang.query_source(QueryKind::Imports)
+                .and_then(|src| match Query::new(&ts, src) {
+                    Ok(q) => Some(q),
+                    Err(e) => {
+                        eprintln!(
+                            "codegraph: imports query skipped for {}: {e:#}",
+                            lang.name()
+                        );
+                        None
+                    }
+                });
+        let refs = lang
+            .query_source(QueryKind::Refs)
+            .and_then(|src| match Query::new(&ts, src) {
+                Ok(q) => Some(q),
+                Err(e) => {
+                    eprintln!("codegraph: refs query skipped for {}: {e}", lang.name());
+                    None
+                }
+            });
+        Ok(LangQueries {
+            ts,
+            defs,
+            imports,
+            refs,
+        })
+    }
+}
+
+pub fn build_index(root: &Path) -> Result<Index> {
+    let files = walk_sources(root)?;
+
+    // Compile each language's queries exactly once, up front. Doing this before the
+    // parallel pass keeps the hot loop free of `Query::new` (the dominant cost) and
+    // lets every worker thread share the compiled queries by reference — `Query` is
+    // `Sync`. A defs-query compile failure is a hard error here, matching the
+    // pre-refactor `?` behaviour.
+    let mut qcache: std::collections::HashMap<Language, LangQueries> =
+        std::collections::HashMap::new();
+    for f in &files {
+        if let std::collections::hash_map::Entry::Vacant(e) = qcache.entry(f.language) {
+            e.insert(LangQueries::compile(f.language)?);
         }
-        if let Some(q) = f.language.query_source(QueryKind::Imports) {
-            // Best-effort: if the query fails to compile against the live grammar
-            // (node kinds drift across tree-sitter releases), skip imports for this
-            // file rather than abort the whole index.
-            if let Err(e) = index_imports(&mut idx, &source, &rel, f.language, q) {
-                eprintln!("codegraph: imports query skipped for {rel}: {e:#}");
-            }
+    }
+
+    // Index files in parallel. Each file is independent: its own `Parser`, its own
+    // tree, its own partial `Index`. rayon's `collect` into a `Vec` preserves input
+    // order, so merging the partials below reproduces exactly the sequential index —
+    // definitions/references land in the same order, keeping output byte-identical.
+    let partials: Vec<Index> = files
+        .par_iter()
+        .filter_map(|f| index_file(root, f, &qcache))
+        .collect();
+
+    // Merge partials in file order. Vecs concatenate; re-export maps merge per key.
+    let mut idx = Index::default();
+    for p in partials {
+        idx.definitions.extend(p.definitions);
+        idx.imports.extend(p.imports);
+        idx.references.extend(p.references);
+        idx.file_meta.extend(p.file_meta);
+        for (k, v) in p.alias_reexports {
+            idx.alias_reexports.entry(k).or_default().extend(v);
         }
-        if let Some(q) = f.language.query_source(QueryKind::Refs) {
-            if let Err(e) = index_refs(&mut idx, &source, &rel, f.language, q) {
-                eprintln!("codegraph: refs query skipped for {rel}: {e}");
-            }
+        for (k, v) in p.wildcard_reexports {
+            idx.wildcard_reexports.entry(k).or_default().extend(v);
         }
     }
     Ok(idx)
+}
+
+/// Parse one source file and run all three queries against it, returning a
+/// single-file partial `Index`. Returns `None` for unreadable files, grammar
+/// configuration failures, or parse failures — the caller drops them, matching
+/// the sequential loop's `continue`.
+fn index_file(root: &Path, f: &crate::walk::SourceFile, qcache: &QueryCache) -> Option<Index> {
+    let source = fs::read_to_string(&f.path).ok()?;
+    let rel = f
+        .path
+        .strip_prefix(root)
+        .unwrap_or(&f.path)
+        .to_string_lossy()
+        .into_owned();
+    let queries = qcache.get(&f.language)?;
+
+    let mut parser = Parser::new();
+    if parser.set_language(&queries.ts).is_err() {
+        eprintln!("codegraph: set language failed for {rel}");
+        return None;
+    }
+    let tree = parser.parse(&source, None)?;
+
+    let mut local = Index::default();
+    local.file_meta.insert(
+        rel.clone(),
+        FileMeta {
+            len: source.len() as u64,
+        },
+    );
+    if let Some(q) = &queries.defs {
+        index_defs(&mut local, &source, &rel, f.language, &tree, q);
+    }
+    if let Some(q) = &queries.imports {
+        index_imports(&mut local, &source, &rel, f.language, &tree, q);
+    }
+    if let Some(q) = &queries.refs {
+        index_refs(&mut local, &source, &rel, &tree, q);
+    }
+    Some(local)
 }
 
 fn index_defs(
@@ -191,22 +299,13 @@ fn index_defs(
     source: &str,
     rel: &str,
     lang: Language,
-    query_src: &str,
-) -> Result<()> {
-    let mut parser = Parser::new();
-    let ts = lang.ts_language();
-    parser
-        .set_language(&ts)
-        .with_context(|| format!("set language {}", lang.name()))?;
-    let tree = parser
-        .parse(source, None)
-        .with_context(|| format!("parse {rel}"))?;
-    let query = Query::new(&ts, query_src)
-        .with_context(|| format!("compile defs query for {}", lang.name()))?;
+    tree: &tree_sitter::Tree,
+    query: &Query,
+) {
     let names = query.capture_names();
     let bytes = source.as_bytes();
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    let mut matches = cursor.matches(query, tree.root_node(), bytes);
     while let Some(m) = matches.next() {
         let mut def_node = None;
         let mut def_kind = None;
@@ -235,7 +334,6 @@ fn index_defs(
             exported,
         });
     }
-    Ok(())
 }
 
 fn index_imports(
@@ -243,13 +341,9 @@ fn index_imports(
     source: &str,
     rel: &str,
     lang: Language,
-    query_src: &str,
-) -> Result<()> {
-    let ts = lang.ts_language();
-    let mut parser = Parser::new();
-    parser.set_language(&ts)?;
-    let tree = parser.parse(source, None).context("parse")?;
-    let query = Query::new(&ts, query_src).context("compile imports query")?;
+    tree: &tree_sitter::Tree,
+    query: &Query,
+) {
     let names = query.capture_names();
     let bytes = source.as_bytes();
 
@@ -263,7 +357,7 @@ fn index_imports(
         std::collections::HashSet::new();
     {
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+        let mut matches = cursor.matches(query, tree.root_node(), bytes);
         while let Some(m) = matches.next() {
             for cap in m.captures {
                 let cname = names[cap.index as usize];
@@ -283,7 +377,7 @@ fn index_imports(
     );
 
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    let mut matches = cursor.matches(query, tree.root_node(), bytes);
     while let Some(m) = matches.next() {
         let mut path_text: Option<String> = None;
         let mut single_name: Option<String> = None;
@@ -465,7 +559,6 @@ fn index_imports(
             }
         }
     }
-    Ok(())
 }
 
 impl RefKind {
@@ -478,18 +571,7 @@ impl RefKind {
     }
 }
 
-fn index_refs(
-    idx: &mut Index,
-    source: &str,
-    rel: &str,
-    lang: Language,
-    query_src: &str,
-) -> Result<()> {
-    let ts = lang.ts_language();
-    let mut parser = Parser::new();
-    parser.set_language(&ts)?;
-    let tree = parser.parse(source, None).context("parse")?;
-    let query = Query::new(&ts, query_src).context("compile refs query")?;
+fn index_refs(idx: &mut Index, source: &str, rel: &str, tree: &tree_sitter::Tree, query: &Query) {
     let names = query.capture_names();
     let bytes = source.as_bytes();
     let mut cursor = QueryCursor::new();
@@ -497,7 +579,7 @@ fn index_refs(
     // Dedupe key: (byte_offset, name). Calls and Reference captures often overlap at the same byte.
     let mut seen: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
 
-    let mut matches = cursor.matches(&query, tree.root_node(), bytes);
+    let mut matches = cursor.matches(query, tree.root_node(), bytes);
     while let Some(m) = matches.next() {
         let mut name_node: Option<tree_sitter::Node<'_>> = None;
         let mut ref_kind: Option<RefKind> = None;
@@ -531,7 +613,6 @@ fn index_refs(
             context,
         });
     }
-    Ok(())
 }
 
 fn line_at(source: &str, line: usize) -> String {

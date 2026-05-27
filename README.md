@@ -34,7 +34,7 @@ Claude Code refreshes the SKILL manifests on every restart and on `/reload-plugi
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh
 # pin a specific version:
-curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh -s -- v0.4.0
+curl -fsSL https://raw.githubusercontent.com/AssetsArt/skills/main/scripts/install.sh | sh -s -- v0.4.1
 ```
 
 The script fetches the repo's source tarball at the resolved tag (no `git` required) and stages each skill into `~/.claude/skills/ny-<name>/`. Override the destination with `CLAUDE_SKILLS_DIR=/some/path`. Use this in addition to the plugin install above (or on its own) — the plugin handles SKILL.md updates, this handles binary updates.
@@ -43,7 +43,7 @@ The script fetches the repo's source tarball at the resolved tag (no `git` requi
 
 ```bash
 ./scripts/install.sh           # downloads the latest release for your platform
-./scripts/install.sh v0.4.0    # or pin a specific version
+./scripts/install.sh v0.4.1    # or pin a specific version
 ```
 
 Either entry point lands the binary at `skills/ny-<name>/scripts/<name>` and also copies the skill dir into `~/.claude/skills/ny-<name>/` so Claude can discover it. If a `~/.claude/skills/ny-<name>` already exists as a symlink (manual setup), the script leaves it alone.
