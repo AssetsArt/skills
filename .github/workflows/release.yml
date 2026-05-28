@@ -63,6 +63,8 @@ jobs:
 
       - name: Audit skills exist
         shell: bash
+        env:
+          SLUG: ${{ matrix.slug }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -71,19 +73,25 @@ jobs:
             echo "::error::no skill dirs found under skills/ -- nothing to package"
             exit 1
           fi
+          cli=0
+          process=0
           for s in "${skills[@]}"; do
             s="${s%/}"
             name="${s#skills/ny-}"
-            if [ ! -f "crates/$name/Cargo.toml" ]; then
-              echo "::error::skill $s has no matching crates/$name"
-              exit 1
-            fi
             if [ ! -f "$s/SKILL.md" ]; then
               echo "::error::skill $s missing SKILL.md"
               exit 1
             fi
+            if [ -f "crates/$name/Cargo.toml" ]; then
+              cli=$((cli + 1))
+            else
+              # Process skill: no crate, no binary. Ship SKILL.md only (via
+              # source tarball / plugin install). Skip packaging in this job.
+              echo "process skill (no crate): $s"
+              process=$((process + 1))
+            fi
           done
-          echo "packaging ${#skills[@]} skill(s) for ${{ matrix.slug }}"
+          echo "packaging $cli CLI skill(s) and acknowledging $process process skill(s) for $SLUG"
 
       - name: Audit binary crates have skill dirs
         shell: bash
@@ -117,11 +125,12 @@ jobs:
 
       - name: Package + checksum every skill
         shell: bash
+        env:
+          SLUG: ${{ matrix.slug }}
+          TRIPLE: ${{ matrix.triple }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          slug="${{ matrix.slug }}"
-          triple="${{ matrix.triple }}"
           out="release-assets"
           mkdir -p "$out"
           if command -v sha256sum >/dev/null; then SHA=(sha256sum); else SHA=(shasum -a 256); fi
@@ -129,9 +138,15 @@ jobs:
           for skill_dir in skills/ny-*/; do
             skill_dir="${skill_dir%/}"
             name="${skill_dir#skills/ny-}"
-            tar -C "target/$triple/release" -czf "$out/$name-$tag-$slug.tar.gz" "$name"
-            ( cd "$out" && "${SHA[@]}" "$name-$tag-$slug.tar.gz" > "$name-$tag-$slug.sha256" )
-            echo "packaged $out/$name-$tag-$slug.tar.gz"
+            # Process skills (no matching crate) ship via the source tarball
+            # and the plugin install path; no binary to package here.
+            if [ ! -f "crates/$name/Cargo.toml" ]; then
+              echo "skip (process skill, no crate): $skill_dir"
+              continue
+            fi
+            tar -C "target/$TRIPLE/release" -czf "$out/$name-$tag-$SLUG.tar.gz" "$name"
+            ( cd "$out" && "${SHA[@]}" "$name-$tag-$SLUG.tar.gz" > "$name-$tag-$SLUG.sha256" )
+            echo "packaged $out/$name-$tag-$SLUG.tar.gz"
           done
 
       - name: Upload release assets

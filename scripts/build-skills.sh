@@ -24,10 +24,18 @@ cd "$repo_root"
 cargo build --workspace --release --locked
 
 built=0
+skipped=0
 shopt -s nullglob
 for skill_dir in skills/ny-*/; do
   skill_dir="${skill_dir%/}"               # strip trailing /
   name="${skill_dir#skills/ny-}"           # ny-codemap -> codemap
+  # Process skills ship a SKILL.md without a binary. Detect by absence of
+  # a matching crate; skip without erroring.
+  if [ ! -f "crates/$name/Cargo.toml" ]; then
+    echo "skip (process skill, no crate): $skill_dir"
+    skipped=$((skipped + 1))
+    continue
+  fi
   binary="target/release/$name"
   if [ ! -f "$binary" ]; then
     echo "error: $binary missing; the crate may not declare [[bin]]" >&2
@@ -39,4 +47,4 @@ for skill_dir in skills/ny-*/; do
   echo "built $skill_dir/scripts/$name"
   built=$((built + 1))
 done
-echo "done: $built skill binary(ies)"
+echo "done: $built skill binary(ies), $skipped process skill(s) skipped"
