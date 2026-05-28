@@ -198,81 +198,91 @@ for skill_dir in skills/*/; do
     continue
   fi
 
-  asset="$crate-$tag-$slug.tar.gz"
-  sum="$crate-$tag-$slug.sha256"
-  asset_url="https://github.com/$repo/releases/download/$tag/$asset"
-  sum_url="https://github.com/$repo/releases/download/$tag/$sum"
-
-  stage="$(mktemp -d 2>/dev/null || mktemp -d -t skills-install)"
-  # Cleanup on every path out of this iteration. trap is per-iteration because
-  # we want per-skill atomicity (a failed download must not poison the next).
-  trap 'rm -rf "$stage"' EXIT INT TERM
-
-  # Asset 404 is a soft skip: shell-only skills won't publish a binary, and a
-  # release that ships some-but-not-all binaries is still useful.
-  if ! curl -fsSL --tlsv1.2 -o "$stage/$asset" "$asset_url" 2>/dev/null; then
-    echo "skip: no asset for $skill ($asset)" >&2
-    rm -rf "$stage"
-    trap - EXIT INT TERM
-    continue
+  # Discriminate CLI skill vs process skill BEFORE doing any work. A process
+  # skill ships a SKILL.md only -- no crate, no binary, nothing to download.
+  # Detect by absence of a matching crate in the source checkout (we are
+  # always inside one at this point, either local or bootstrapped).
+  is_process_skill=0
+  if [ ! -f "crates/$crate/Cargo.toml" ]; then
+    is_process_skill=1
   fi
 
-  # Checksum 404 with the tarball present is a partial release -- treat as
-  # hard error so we never install an unverified binary.
-  if ! curl -fsSL --tlsv1.2 -o "$stage/$sum" "$sum_url" 2>/dev/null; then
-    echo "error: tarball downloaded but checksum missing: $sum_url" >&2
-    rm -rf "$stage"
-    exit 1
+  if [ "$is_process_skill" = "1" ]; then
+    # Process skill: nothing to fetch. The SKILL.md is already on disk at
+    # $skill_src/SKILL.md and will be registered below. Skip the entire
+    # binary-fetch + checksum + extract block.
+    echo "process skill (no binary): $skill" >&2
+  else
+    asset="$crate-$tag-$slug.tar.gz"
+    sum="$crate-$tag-$slug.sha256"
+    asset_url="https://github.com/$repo/releases/download/$tag/$asset"
+    sum_url="https://github.com/$repo/releases/download/$tag/$sum"
+
+    stage="$(mktemp -d 2>/dev/null || mktemp -d -t skills-install)"
+    # Cleanup on every path out of this iteration. trap is per-iteration because
+    # we want per-skill atomicity (a failed download must not poison the next).
+    trap 'rm -rf "$stage"' EXIT INT TERM
+
+    # Asset 404 here is unexpected -- this is a CLI skill that should have
+    # published. Soft-skip with a warning rather than abort the whole install.
+    if ! curl -fsSL --tlsv1.2 -o "$stage/$asset" "$asset_url" 2>/dev/null; then
+      echo "skip: no asset for $skill ($asset)" >&2
+      rm -rf "$stage"
+      trap - EXIT INT TERM
+      continue
+    fi
+
+    # Checksum 404 with the tarball present is a partial release -- treat as
+    # hard error so we never install an unverified binary.
+    if ! curl -fsSL --tlsv1.2 -o "$stage/$sum" "$sum_url" 2>/dev/null; then
+      echo "error: tarball downloaded but checksum missing: $sum_url" >&2
+      rm -rf "$stage"
+      exit 1
+    fi
+
+    # SECURITY: verify the checksum BEFORE we let tar touch the bytes. If the
+    # archive is tampered with, we never reach extraction.
+    expected="$(awk '{print $1}' "$stage/$sum")"
+    actual="$(cd "$stage" && $SHA_CMD "$asset" | awk '{print $1}')"
+    if [ "$expected" != "$actual" ]; then
+      echo "error: checksum mismatch for $asset (expected $expected, got $actual)" >&2
+      rm -rf "$stage"
+      exit 1
+    fi
+
+    # SECURITY: audit tar entries for absolute paths and ../ traversal BEFORE
+    # extracting. A malicious tarball could otherwise overwrite arbitrary files
+    # outside the skill dir.
+    tar_listing="$(tar -tzf "$stage/$asset")" || {
+      echo "error: could not list $asset (corrupt or unreadable archive)" >&2
+      rm -rf "$stage"
+      exit 1
+    }
+    if printf '%s\n' "$tar_listing" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
+      echo "error: refusing tarball with absolute or '..' entries: $asset" >&2
+      rm -rf "$stage"
+      exit 1
+    fi
+
+    tar -xzf "$stage/$asset" -C "$stage"
+    if [ ! -f "$stage/$crate" ]; then
+      echo "error: $asset did not contain expected binary '$crate' at archive root" >&2
+      rm -rf "$stage"
+      exit 1
+    fi
+
+    mkdir -p "$skill_src/scripts"
+    chmod +x "$stage/$crate"
+    mv -f "$stage/$crate" "$skill_src/scripts/$crate"
+
+    # macOS quarantines downloaded binaries; strip the xattr so the user doesn't
+    # get a Gatekeeper prompt on first run. Failure is fine (linux, no xattr).
+    if [ "$(uname -s)" = "Darwin" ]; then
+      xattr -d com.apple.quarantine "$skill_src/scripts/$crate" 2>/dev/null || true
+    fi
+
+    echo "installed: $skill_src/scripts/$crate" >&2
   fi
-
-  # SECURITY: verify the checksum BEFORE we let tar touch the bytes. If the
-  # archive is tampered with, we never reach extraction.
-  expected="$(awk '{print $1}' "$stage/$sum")"
-  actual="$(cd "$stage" && $SHA_CMD "$asset" | awk '{print $1}')"
-  if [ "$expected" != "$actual" ]; then
-    echo "error: checksum mismatch for $asset (expected $expected, got $actual)" >&2
-    rm -rf "$stage"
-    exit 1
-  fi
-
-  # SECURITY: audit tar entries for absolute paths and ../ traversal BEFORE
-  # extracting. A malicious tarball could otherwise overwrite arbitrary files
-  # outside the skill dir.
-  # Audit covers POSIX entries: absolute (/...) and any segment containing
-  # `..`. Windows drive prefixes (C:/...) are not caught -- we don't target
-  # Windows in the release matrix.
-  # Audit tar entries BEFORE extraction. Capture in two steps so a corrupt
-  # archive (tar -tzf fails) is surfaced with a diagnostic rather than being
-  # silently masked by the grep that follows it.
-  tar_listing="$(tar -tzf "$stage/$asset")" || {
-    echo "error: could not list $asset (corrupt or unreadable archive)" >&2
-    rm -rf "$stage"
-    exit 1
-  }
-  if printf '%s\n' "$tar_listing" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
-    echo "error: refusing tarball with absolute or '..' entries: $asset" >&2
-    rm -rf "$stage"
-    exit 1
-  fi
-
-  tar -xzf "$stage/$asset" -C "$stage"
-  if [ ! -f "$stage/$crate" ]; then
-    echo "error: $asset did not contain expected binary '$crate' at archive root" >&2
-    rm -rf "$stage"
-    exit 1
-  fi
-
-  mkdir -p "$skill_src/scripts"
-  chmod +x "$stage/$crate"
-  mv -f "$stage/$crate" "$skill_src/scripts/$crate"
-
-  # macOS quarantines downloaded binaries; strip the xattr so the user doesn't
-  # get a Gatekeeper prompt on first run. Failure is fine (linux, no xattr).
-  if [ "$(uname -s)" = "Darwin" ]; then
-    xattr -d com.apple.quarantine "$skill_src/scripts/$crate" 2>/dev/null || true
-  fi
-
-  echo "installed: $skill_src/scripts/$crate" >&2
 
   # Register the skill in the user's Claude skills dir so it actually becomes
   # discoverable. Defaults to ~/.claude/skills; override CLAUDE_SKILLS_DIR for
@@ -294,8 +304,11 @@ for skill_dir in skills/*/; do
 
   installed=$((installed + 1))
 
-  rm -rf "$stage"
-  trap - EXIT INT TERM
+  # Process skills never created $stage / set a trap. Skip the cleanup.
+  if [ "$is_process_skill" = "0" ]; then
+    rm -rf "$stage"
+    trap - EXIT INT TERM
+  fi
 done
 
 if [ -n "$bootstrap_dir" ]; then
