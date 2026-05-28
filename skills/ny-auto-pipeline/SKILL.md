@@ -26,7 +26,14 @@ This skill encodes the override semantics the user opts into, AND the discipline
 
 ## The pipeline
 
-Seven phases. The orchestrator (you) coordinates; specialized subagents do the per-task work.
+Seven phases. The orchestrator (you) coordinates; specialized subagents do the per-task work. Several phases compose **existing** skills — references inline so the orchestrator invokes the canonical source rather than reinventing it:
+
+- Phase 1 builds on `superpowers:brainstorming` (with interactive gate overridden)
+- Phase 4 builds on `superpowers:writing-plans`
+- Phase 5 builds on `superpowers:subagent-driven-development` + `superpowers:test-driven-development`
+- Phase 6 composes `superpowers:verification-before-completion` + [`9arm-skills:scrutinize`](https://github.com/thananon/9arm-skills)
+- Phase 7 composes [`9arm-skills:post-mortem`](https://github.com/thananon/9arm-skills) when warranted
+- Empirical verification during impl composes [`9arm-skills:debug-mantra`](https://github.com/thananon/9arm-skills)
 
 ```
 Phase 1: Brainstorm                (orchestrator, with context-gathering)
@@ -87,51 +94,52 @@ Per task, in strict sequence (NEVER parallel — implementation subagents confli
 
 Track progress via `TaskCreate`/`TaskUpdate` at the pipeline-phase granularity (7 tasks), NOT per implementation task — the plan's checkboxes are the implementation tracker.
 
-### Phase 6 — Scrutinize (orchestrator personally reads the diffs)
+### Phase 6 — Scrutinize (delegate to the `scrutinize` skill)
 
-The two review subagents in Phase 5 are good but not infallible. The orchestrator MUST personally read the actual diffs at the end of implementation before declaring the pipeline complete. This is not "Trust the reviewers"; this is "Trust but verify, where the verifier is you, not another subagent."
+**This phase composes two existing skills — invoke them; do not reinvent.**
 
-Run, in this order:
+1. **`superpowers:verification-before-completion`** — Iron Law: "NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE." Re-run the baselines yourself (don't trust subagent-reported counts). If you haven't run the verification command in this message, you cannot claim it passes.
+2. **`9arm-skills:scrutinize`** (from [thananon/9arm-skills](https://github.com/thananon/9arm-skills) — `skills/engineering/scrutinize/SKILL.md`) — outsider-perspective end-to-end review with the workflow: **Intent → Trace → Verify → Report**. Specifically:
+   - **Intent.** State the goal in one sentence. Ask whether a simpler / smaller alternative achieves the same goal. If a better alternative exists, surface it.
+   - **Trace.** Walk the actual code path end-to-end through the real code (not just the diff). Include unchanged code at the seams — bugs hide there.
+   - **Verify.** For each claim the change makes, walk the trace and confirm/refute it. Consider edge cases, concurrent callers, error paths, silent contract changes.
+   - **Report.** One tight section per finding, ordered by severity. Cite `file:line`. Close with a one-line verdict: ship / fix-then-ship / rework / reject.
 
-1. `git log --oneline <base-sha>..HEAD` — quick check of the commit count + messages
+Concretely run, in this order:
+
+1. `git log --oneline <base-sha>..HEAD` — commit count + messages
 2. `git diff --stat <base-sha>..HEAD` — files changed
-3. `git diff <base-sha>..HEAD` for any commit whose touched files include load-bearing code (concurrency primitives, public API, anything called by other modules). Skim, looking for:
-   - Behavior in the diff that the commit message doesn't claim (silent scope creep)
-   - Behavior the commit message claims that isn't in the diff (overpromised work)
-   - `unwrap()` / `expect()` / `as any` / `// TODO` / `// FIXME` introduced
-   - Public API changes the spec didn't mention
-   - Tests that assert weaker invariants than the spec required
-4. For the manual-smoke target (if applicable — long-running server, CLI binary, etc.), run it yourself with a real input the test suite doesn't cover. The subagent's "I ran the smoke and it passed" claim is not equivalent to you actually seeing the smoke pass with your own eyes.
+3. `git diff <base-sha>..HEAD` on load-bearing files (concurrency primitives, public API, cross-module callers). Look for the patterns `scrutinize` calls out: silent scope creep, overpromised work, `unwrap()` / `expect()` / `as any` / `// TODO`, weaker test invariants than spec required.
+4. Re-run baselines yourself (`verification-before-completion`'s gate).
+5. Manual smoke against a real input the test suite doesn't cover — subagent "I ran it" is not equivalent to you seeing it pass.
 
-If scrutinize finds something the reviewers missed: fix inline if mechanical, or escalate via advisor if structural. Don't silently shrug.
+If scrutinize finds something the reviewers missed: fix inline if mechanical, escalate via advisor if structural. Don't silently shrug.
 
-The system prompt for Claude Code explicitly says: *"Trust but verify: an agent's summary describes what it intended to do, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting the work as done."* Phase 6 is where this happens.
+### Phase 7 — Post-mortem (delegate to the `post-mortem` skill when warranted)
 
-### Phase 7 — Post-mortem (capture what happened)
+**If the pipeline involved real debugging or a non-trivial blocker, invoke `9arm-skills:post-mortem`** (from [thananon/9arm-skills](https://github.com/thananon/9arm-skills) — `skills/engineering/post-mortem/SKILL.md`). Its required inputs match exactly what a real blocker generates: reliable repro, root cause identified, fix identified, fix validated. Its structure (Summary / Symptom / Root cause / Why it produced the symptom / Fix / How it was found / Why it slipped through / Validation) is the canonical engineering writeup.
 
-A brief retrospective at the end of the pipeline. Goal: convert this run's friction points into future-skill wisdom. Two outputs:
+When to invoke the full `post-mortem` skill (separate doc):
+- A blocker required an advisor call and a real pivot
+- A diagnostic claim from a subagent turned out to be wrong on inspection, and the eventual cause is worth recording
+- A test was misdesigned in a way that hid a real bug
+- The work shipped with a documented limitation that future engineers will want context on
 
-**A. User-facing wrap-up message** (what the user sees):
+When NOT to invoke `post-mortem` (per its own NOT-WHEN list):
+- Fix not validated yet
+- Trivial work (the PR description is the record)
+- A clean run with no blockers — a short wrap-up message is sufficient
+
+For clean runs (no advisor calls, no blockers, no deferred acceptance criteria), produce a compact user-facing wrap-up only:
 
 - Commits that landed (SHAs + messages, compact table)
-- Baselines green (test counts)
-- What's PARTIAL or DEFERRED (with the reason, not papered over)
+- Baselines green (test counts, re-run by you in Phase 6)
+- What's PARTIAL or DEFERRED — say so plainly, don't paper over with the older healthier number
 - Suggested next-session pickup if obvious
 
-**B. Internal lessons capture** (what gets fed back):
+For runs with real friction, the `post-mortem` doc is the deliverable; the user-facing message can be a one-line pointer to it.
 
-Inside your final wrap-up, include a short `## Lessons` block if any of these happened:
-
-- An implementer subagent reported `BLOCKED` and you found the right pivot — name what the root cause turned out to be and what would have surfaced it earlier
-- A test was wrong in a way the plan author (you) should have caught — name the assertion pattern that misled you (e.g., "concurrent-claim test that doesn't hold claims open conflates concurrent and sequential reuse")
-- An advisor call changed direction in a non-obvious way — name the discrimination criterion the advisor surfaced
-- A diagnostic claim from a subagent turned out to be partially wrong on inspection — name the actual mechanism
-
-These lessons are NOT for the user's benefit; they're for the next invocation of this skill (or for the user to harvest into permanent skill updates if a pattern repeats across runs).
-
-Skip the post-mortem block if the pipeline ran clean (no blockers, no advisor calls, no deferred items). A clean run doesn't need a retro; a sparse retro is fine.
-
-**Do NOT** write the post-mortem as a separate file or commit. It's a section in the wrap-up message. Persistence happens when patterns repeat — at that point, the human (or you in a later session) edits this SKILL.md to add the rule.
+**Do NOT** write a post-mortem on top of an unvalidated fix. `post-mortem` requires validated repro and validated fix — if you don't have both, you're documenting a hypothesis.
 
 ## Escalation
 
@@ -148,15 +156,18 @@ Skip the post-mortem block if the pipeline ran clean (no blockers, no advisor ca
 - Subagent reports of "DONE" — those go to the reviewer
 - Single false positives from loop-detection hooks (they're cumulative session counters, not actionable signals)
 
-## Empirical-first verification
+## Empirical-first verification (delegate to `debug-mantra`)
 
-Lesson from past runs: when a subagent reports "X is broken because Y," verify Y before pivoting. Don't trust diagnostic claims; reproduce.
+When a subagent reports `BLOCKED` or `DONE_WITH_CONCERNS` with a diagnostic claim ("X is broken because Y"), invoke **`9arm-skills:debug-mantra`** (from [thananon/9arm-skills](https://github.com/thananon/9arm-skills) — `skills/engineering/debug-mantra/SKILL.md`) before pivoting. Its four-step discipline is:
 
-Examples:
-- "Bun's `file:` install symlinks files back to the source repo" → ran `ls -la node_modules/brust/runtime/index.ts` and confirmed the symlink + the symlinked file resolves React from a different physical copy. THEN pivoted.
-- "MaybeUninit::zeroed for ThreadsafeFunction triggers linker errors" → confirmed `cargo test --lib --no-run` failed at link time with the named symbol. THEN added the stub.
+1. **Reproduce reliably.** Build a runnable repro before anything else. No repro → stop, get one.
+2. **Know the fail path.** Debugger first; then source trace + knob enumeration; then in-code instrumentation. Don't skip ahead.
+3. **Falsify the hypothesis.** Run the *disproof* first. If the hypothesis dies, you saved yourself from chasing a phantom.
+4. **Every run is a breadcrumb.** Cross-reference all attempts.
 
-Two failed empirical checks (the dual-React still surfacing under `bun run build`, the linker error persisting under the `Option<>` pivot) saved entire days of wrong-direction work by re-consulting the advisor with concrete evidence.
+This is the right discipline when a subagent's diagnostic claim needs verification before you commit to a pivot. The orchestrator-side reproductions of "dual-React surfaces in build mode too" or "the linker error persists with Option pivot" are both step-1 work — confirm the failure mode at your own command line, with eyes on the actual output, before re-dispatching with a different approach.
+
+Coupled with the **advisor** tool at real decision points, debug-mantra step 3 (falsify) is what discriminates between "we need a small fix" and "the spec premise is broken."
 
 ## Test design discipline
 
