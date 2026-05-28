@@ -1,20 +1,21 @@
 # skills
 
-> AssetsArt's collection of agent-callable CLI tools, written in Rust.
+> AssetsArt's collection of agent-callable skills — Rust CLI tools plus process orchestration skills.
 
-`skills` is a Cargo workspace where each member is a small, focused command-line tool designed to be invoked by AI coding agents (e.g. Claude Code). Every skill ships:
+`skills` is a Cargo workspace plus a skill registry. Most members are small, focused command-line tools written in Rust; a few are process skills with no binary at all (orchestration patterns the agent invokes by reading a `SKILL.md`). Every skill ships:
 
-- a single self-contained binary,
 - a `SKILL.md` manifest the agent reads to know when and how to call it,
+- (for CLI skills) a single self-contained binary built from a sibling `crates/<name>` workspace member,
 - a human-facing `README.md` with examples.
 
 ## Skill Index
 
-| Skill | What it does | Crate |
-| --- | --- | --- |
-| [ny-codemap](./skills/ny-codemap) | Survey a codebase: list files, show symbols, find definitions | `crates/codemap` |
-| [ny-codegraph](./skills/ny-codegraph) | Semantic cross-references: find-refs, callers, callees, impact | `crates/codegraph` |
-| [ny-astedit](./skills/ny-astedit) | AST-validated rewrites: `rename` (cross-file symbol rename via codegraph) and `rewrite` (structural pattern→rewrite via ast-grep). Dry-run by default; atomic per-file writes. | `crates/astedit` |
+| Skill | Kind | What it does | Crate |
+| --- | --- | --- | --- |
+| [ny-codemap](./skills/ny-codemap) | CLI | Survey a codebase: list files, show symbols, find definitions | `crates/codemap` |
+| [ny-codegraph](./skills/ny-codegraph) | CLI | Semantic cross-references: find-refs, callers, callees, impact | `crates/codegraph` |
+| [ny-astedit](./skills/ny-astedit) | CLI | AST-validated rewrites: `rename` (cross-file symbol rename via codegraph) and `rewrite` (structural pattern→rewrite via ast-grep). Dry-run by default; atomic per-file writes. | `crates/astedit` |
+| [ny-auto-pipeline](./skills/ny-auto-pipeline) | Process | Autonomous brainstorm → spec → spec-review → plan → subagent-driven impl → scrutinize → post-mortem. Overrides the interactive gates of `superpowers:brainstorming` / `writing-plans` when the user has granted autonomous run authority. Composes with `9arm-skills:scrutinize` / `post-mortem` / `debug-mantra` and `superpowers:verification-before-completion`. | — |
 
 ## Install (end users)
 
@@ -64,12 +65,27 @@ Release tarballs will be paired with `.sha256` companions generated in the same 
 
 ## Adding a new skill
 
-The repo follows two conventions: source lives in `crates/<name>/`, and the agent-installed surface lives in `skills/ny-<name>/`. The mapping `skill_dir == "ny-" + crate_name` is load-bearing — `build-skills.sh`, `install.sh`, and `release.yml` all rely on it.
+Two flavours.
+
+### CLI skills (the common case)
+
+Source lives in `crates/<name>/`, and the agent-installed surface lives in `skills/ny-<name>/`. The mapping `skill_dir == "ny-" + crate_name` is load-bearing — `build-skills.sh`, `install.sh`, and `release.yml` all rely on it.
 
 1. Create `crates/<name>/` (with `Cargo.toml`, `src/main.rs`, etc. — use `crates/codemap` as a template). Inherit shared metadata via `version.workspace = true`, `license.workspace = true`, etc.
 2. Create `skills/ny-<name>/SKILL.md` with frontmatter `name: ny-<name>` and a `description` field so agents can discover it. Reference the binary as `./scripts/<name>` (the pre-built file lives at `skills/ny-<name>/scripts/<name>`; the `scripts/` directory is gitignored).
-3. Add a row to the Skill Index table above: link `[ny-<name>](./skills/ny-<name>)`, crate column `` `crates/<name>` ``.
+3. Add a row to the Skill Index table above with Kind = `CLI`.
 4. Run `./scripts/build-skills.sh` to verify the local build pipeline picks up the new skill. The release workflow does not require changes — its matrix is per-target, not per-skill.
+
+### Process skills (no binary)
+
+Sometimes the skill is an orchestration pattern, not a CLI. Example: `ny-auto-pipeline`. These ship a `SKILL.md` only.
+
+1. Create `skills/ny-<name>/SKILL.md` with frontmatter `name: ny-<name>` and a `description` that lists trigger phrases (English + Thai if applicable) plus negative cases.
+2. No `crates/<name>/` directory; no entry in the workspace `Cargo.toml`.
+3. Add a row to the Skill Index table above with Kind = `Process` and crate column `—`.
+4. `build-skills.sh` and `install.sh` skip directories without a `scripts/` subdir automatically — no other infra changes needed.
+
+YAML frontmatter discipline: if the `description` value contains `: ` (colon + space) anywhere, **wrap the whole value in double quotes** — YAML will otherwise read the colon as a key/value separator and the manifest will fail to load.
 
 ## Versioning
 
