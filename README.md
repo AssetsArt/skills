@@ -16,6 +16,7 @@
 | [ny-codegraph](./skills/ny-codegraph) | CLI | Semantic cross-references: find-refs, callers, callees, impact | `crates/codegraph` |
 | [ny-astedit](./skills/ny-astedit) | CLI | AST-validated rewrites: `rename` (cross-file symbol rename via codegraph) and `rewrite` (structural pattern→rewrite via ast-grep). Dry-run by default; atomic per-file writes. | `crates/astedit` |
 | [ny-auto-pipeline](./skills/ny-auto-pipeline) | Process | Autonomous brainstorm → spec → spec-review → plan → subagent-driven impl → scrutinize → post-mortem. Overrides the interactive gates of `superpowers:brainstorming` / `writing-plans` when the user has granted autonomous run authority. Composes with `9arm-skills:scrutinize` / `post-mortem` / `debug-mantra` and `superpowers:verification-before-completion`. | — |
+| [ny-orchestrate-subagents](./skills/ny-orchestrate-subagents) | Process | Opus orchestrator that routes each task to the cheapest capable subagent tier (Haiku → Sonnet → Opus), dispatches with `run_in_background` to stay responsive (multitask: take new work while earlier work runs), and reports as results return. Includes an automatic conflict-detection heuristic (write-set/read-set overlap) to decide parallel vs serialize before every fan-out. | — |
 
 ## Install (end users)
 
