@@ -31,9 +31,12 @@ Seven phases. The orchestrator (you) coordinates; specialized subagents do the p
 - Phase 1 builds on `superpowers:brainstorming` (with interactive gate overridden)
 - Phase 4 builds on `superpowers:writing-plans`
 - Phase 5 builds on `superpowers:subagent-driven-development` + `superpowers:test-driven-development`
+- Phase 5 dispatch mechanics — which model tier each subagent gets (Haiku/Sonnet/Opus), how to stay responsive while subagents run, and parallel-vs-serialize decisions — follow `ny-orchestrate-subagents`
 - Phase 6 composes `superpowers:verification-before-completion` + [`9arm-skills:scrutinize`](https://github.com/thananon/9arm-skills)
 - Phase 7 composes [`9arm-skills:post-mortem`](https://github.com/thananon/9arm-skills) when warranted
 - Empirical verification during impl composes [`9arm-skills:debug-mantra`](https://github.com/thananon/9arm-skills)
+
+This skill is the **autonomous full-pipeline** composition (brainstorm → … → post-mortem). For the lower-level question of *how to route and run subagents* — capability-tiered dispatch, background multitasking, and the conflict-detection heuristic — see the sibling skill `ny-orchestrate-subagents`. ny-auto-pipeline decides WHAT phases run and in what order; ny-orchestrate-subagents decides HOW each subagent is tiered, dispatched, and parallelized vs serialized.
 
 ```
 Phase 1: Brainstorm                (orchestrator, with context-gathering)
@@ -78,9 +81,9 @@ Phase 7: Post-mortem               (orchestrator — capture what happened)
 
 ### Phase 5 — Subagent-driven implementation
 
-Per task, in strict sequence (NEVER parallel — implementation subagents conflict on file state):
+Per task, in strict sequence (NEVER parallel — implementation subagents conflict on file state). This is the `ny-orchestrate-subagents` conflict-detection heuristic applied: every implementer shares one git working tree, so their write-sets overlap → serialize. The escape hatch is isolation — give each its own git worktree — but the default for in-tree edits is sequential. (Read-only reviewers operate on a captured diff, so the two reviewers per task *can* run concurrently.)
 
-1. **Implementer subagent** (`general-purpose`, model: cheap for mechanical, standard for integration, capable for architecture)
+1. **Implementer subagent** (`general-purpose`, model per the `ny-orchestrate-subagents` capability ladder: Haiku for mechanical, Sonnet for integration, Opus for architecture)
    - Brief: full task text pasted verbatim, scene-setting context, parent commit SHA, ESCALATE list, reporting format
    - Do NOT make the subagent read the plan file — paste the task text into the prompt
 2. Handle the report:
