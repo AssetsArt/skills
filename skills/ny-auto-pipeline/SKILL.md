@@ -146,7 +146,9 @@ For runs with real friction, the `post-mortem` doc is the deliverable; the user-
 
 ## Escalation
 
-**Call the `advisor` tool when:**
+The concrete advisor mechanism is the sibling skill `ny-principal-advisor` — a fresh-context Principal SWE/Architect subagent dispatched on Fable (fallback Opus). It defines the brief template, the dispatch rules, and how to weigh the answer.
+
+**Call the advisor (`ny-principal-advisor`) when:**
 
 1. An implementer subagent reports `BLOCKED` for the second time on the same root cause. Two attempts on the same error means the approach itself is wrong — not the implementation.
 2. Spec acceptance criteria conflict with empirical reality. (Example from a past run: spec said "scaffolded project should boot via `bun run dev`", reality was Bun's `file:` install symlinks individual files back to the source repo, causing a dual-React copy. Advisor said "stop digging, this is a separate sub-project, pivot the test.")
